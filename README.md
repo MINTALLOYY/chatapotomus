@@ -4,7 +4,18 @@ Minimal Flask + Firebase MVP that supports:
 - Verified auth gate
 - Story metadata + view-once image access
 - Direct messages (text + image)
+- **Connection invites system** (message requests for spam prevention)
 - Report submission + cleanup endpoint
+
+## Features
+
+### Connection Invites (NEW)
+A security feature that prevents spam by requiring users to send and accept connection requests before messaging. See [INVITES_FEATURE.md](INVITES_FEATURE.md) for full documentation.
+
+- Send invites with optional personal messages
+- Accept, ignore, or block & report requests
+- Requests appear in message inbox, not a separate tab
+- Rate limiting and spam prevention
 
 ## 1) Setup
 
@@ -54,14 +65,17 @@ Recommended Firestore indexes:
 3. Create a profile username on `/login`.
 4. Upload a story image (max 300 KB recommended) via `/addstory`.
 5. View stories on `/home`.
-6. Create a chat with another UID and send messages in `/messages/<userId>`.
-7. Run cleanup (requires auth) with:
+6. Send connection invites to other users from `/messages`.
+7. Accept/decline connection requests from `/messages`.
+8. Create a chat with another user (requires accepted connection) in `/messages/<userId>`.
+9. Run cleanup (requires auth) with:
    ```bash
    curl -X POST -H "Authorization: Bearer <ID_TOKEN>" http://127.0.0.1:5000/api/maintenance/cleanup
    ```
 
 ## 5) MVP API Surface (summary)
 
+### Authentication & Users
 - `POST /api/auth/verify`
 - `POST /api/session`
 - `DELETE /api/session`
@@ -69,10 +83,23 @@ Recommended Firestore indexes:
 - `POST /api/users`
 - `GET /api/users/me`
 - `GET /api/users/friends`
+
+### Stories
 - `GET /api/stories`
 - `POST /api/stories`
 - `POST /api/stories/<story_id>/media/<media_id>/view`
-- `POST /api/chats`
+
+### Connection Invites (NEW)
+- `POST /api/connections/invite`
+- `GET /api/connections/requests`
+- `GET /api/connections/sent`
+- `POST /api/connections/<connection_id>/accept`
+- `POST /api/connections/<connection_id>/decline`
+- `POST /api/connections/<connection_id>/block`
+- `GET /api/connections/status/<user_id>`
+
+### Chats & Messages
+- `POST /api/chats` (requires accepted connection)
 - `GET /api/chats`
 - `GET /api/chats/<chat_id>/messages`
 - `POST /api/chats/<chat_id>/messages`

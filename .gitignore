@@ -8,7 +8,7 @@ __pycache__/
 venv/
 
 # Firebase
-firebase_creds.json
+firebase-creds.json
 firebase-sa-creds.json
 
 # OS

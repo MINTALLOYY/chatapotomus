@@ -22,6 +22,7 @@ RATE_LIMITS = {
     "stories:create": (5, 24 * 60 * 60),
     "messages:create": (200, 60),
     "reports:create": (60, 60 * 60),
+    "connections:invite": (20, 60 * 60),
 }
 
 RATE_BUCKETS = {}
@@ -137,6 +138,15 @@ def get_message_doc(message_id):
         message_id (str): Message identifier.
     """
     return db.collection("messages").document(message_id)
+
+
+def get_connection_doc(connection_id):
+    """Return a Firestore DocumentReference for `connections/{connection_id}`.
+
+    Args:
+        connection_id (str): Connection identifier.
+    """
+    return db.collection("connections").document(connection_id)
 
 
 def check_rate_limit(uid, action_key):
@@ -309,6 +319,54 @@ def require_chat_member(chat_id, uid):
     if uid not in participants:
         abort(403, description="Not authorized for this chat")
     return chat
+
+
+def check_connection_status(uid1, uid2):
+    """Check if two users have an accepted connection.
+    
+    Returns connection dict if accepted, None otherwise.
+    """
+    # Check in both directions
+    query1 = db.collection("connections").where(
+        "requesterUid", "==", uid1
+    ).where("recipientUid", "==", uid2).where("status", "==", "ACCEPTED").limit(1).stream()
+    
+    for doc in query1:
+        return doc.to_dict()
+    
+    query2 = db.collection("connections").where(
+        "requesterUid", "==", uid2
+    ).where("recipientUid", "==", uid1).where("status", "==", "ACCEPTED").limit(1).stream()
+    
+    for doc in query2:
+        return doc.to_dict()
+    
+    return None
+
+
+def get_pending_connection(uid1, uid2):
+    """Get pending connection between two users if exists.
+    
+    Returns tuple (connection_id, connection_dict, direction) where direction is 
+    'sent' if uid1 is requester, 'received' if uid1 is recipient, None if no pending connection.
+    """
+    # Check if uid1 sent to uid2
+    query1 = db.collection("connections").where(
+        "requesterUid", "==", uid1
+    ).where("recipientUid", "==", uid2).where("status", "==", "PENDING").limit(1).stream()
+    
+    for doc in query1:
+        return doc.id, doc.to_dict(), "sent"
+    
+    # Check if uid2 sent to uid1
+    query2 = db.collection("connections").where(
+        "requesterUid", "==", uid2
+    ).where("recipientUid", "==", uid1).where("status", "==", "PENDING").limit(1).stream()
+    
+    for doc in query2:
+        return doc.id, doc.to_dict(), "received"
+    
+    return None, None, None
 
 
 @app.route("/")
@@ -672,12 +730,18 @@ def create_chat():
 
     JSON body: {"participantUid": "other-user-uid"}
     Requires auth. Returns `chatId` and `participants`.
+    Requires an accepted connection between users.
     """
     ensure_user_profile(request.user["uid"])
     payload = request.get_json(force=True)
     participant_uid = payload.get("participantUid")
     if not participant_uid:
         abort(400, description="participantUid is required")
+    
+    # Check if connection is accepted
+    connection = check_connection_status(request.user["uid"], participant_uid)
+    if not connection:
+        abort(403, description="Connection must be accepted before messaging")
 
     participants = sorted({request.user["uid"], participant_uid})
     chat_id = "_".join(participants)
@@ -839,6 +903,277 @@ def view_message(message_id):
         minutes=STORY_VIEW_URL_MINUTES,
     )
     return jsonify({"viewUrl": signed_url})
+
+
+@app.route("/api/connections/invite", methods=["POST"])
+@require_auth
+def send_invite():
+    """Send a connection invitation to another user.
+    
+    JSON body: {
+        "recipientUid": "uid",
+        "inviteMessage": "optional message",
+        "contextType": "group|post|null",
+        "contextId": "optional id"
+    }
+    Requires auth. Returns the created connectionId.
+    """
+    ensure_user_profile(request.user["uid"])
+    check_rate_limit(request.user["uid"], "connections:invite")
+    
+    payload = request.get_json(force=True)
+    recipient_uid = payload.get("recipientUid")
+    invite_message = payload.get("inviteMessage", "").strip()
+    context_type = payload.get("contextType")
+    context_id = payload.get("contextId")
+    
+    if not recipient_uid:
+        abort(400, description="recipientUid is required")
+    
+    if recipient_uid == request.user["uid"]:
+        abort(400, description="Cannot invite yourself")
+    
+    # Check if recipient exists
+    recipient = get_user_profile(recipient_uid)
+    if not recipient:
+        abort(404, description="Recipient user not found")
+    
+    # Check for existing connection
+    existing_query = db.collection("connections").where(
+        "requesterUid", "==", request.user["uid"]
+    ).where("recipientUid", "==", recipient_uid).where(
+        "status", "in", ["PENDING", "ACCEPTED"]
+    ).limit(1).stream()
+    
+    if any(existing_query):
+        abort(400, description="Connection request already exists")
+    
+    # Check for reverse connection
+    reverse_query = db.collection("connections").where(
+        "requesterUid", "==", recipient_uid
+    ).where("recipientUid", "==", request.user["uid"]).where(
+        "status", "in", ["PENDING", "ACCEPTED"]
+    ).limit(1).stream()
+    
+    if any(reverse_query):
+        abort(400, description="Connection already exists")
+    
+    # Create connection
+    connection_id = str(uuid.uuid4())
+    get_connection_doc(connection_id).set({
+        "requesterUid": request.user["uid"],
+        "recipientUid": recipient_uid,
+        "status": "PENDING",
+        "inviteMessage": invite_message,
+        "contextType": context_type,
+        "contextId": context_id,
+        "createdAt": now_utc(),
+        "updatedAt": now_utc(),
+    })
+    
+    return jsonify({"connectionId": connection_id})
+
+
+@app.route("/api/connections/requests", methods=["GET"])
+@require_auth
+def list_connection_requests():
+    """List pending connection requests received by the authenticated user.
+    
+    Returns a list of pending invitations with requester info.
+    """
+    ensure_user_profile(request.user["uid"])
+    requests = []
+    
+    query = db.collection("connections").where(
+        "recipientUid", "==", request.user["uid"]
+    ).where("status", "==", "PENDING").order_by("createdAt", direction=firestore.Query.DESCENDING)
+    
+    for doc in query.stream():
+        data = doc.to_dict()
+        requester_profile = get_user_profile(data.get("requesterUid"))
+        requests.append({
+            "connectionId": doc.id,
+            "requesterUid": data.get("requesterUid"),
+            "requesterUsername": requester_profile.get("username") if requester_profile else "Unknown",
+            "inviteMessage": data.get("inviteMessage"),
+            "contextType": data.get("contextType"),
+            "contextId": data.get("contextId"),
+            "createdAt": serialize_datetime(data.get("createdAt")),
+        })
+    
+    return jsonify({"requests": requests})
+
+
+@app.route("/api/connections/sent", methods=["GET"])
+@require_auth
+def list_sent_invites():
+    """List pending connection invites sent by the authenticated user.
+    
+    Returns a list of pending invitations sent to others.
+    """
+    ensure_user_profile(request.user["uid"])
+    sent = []
+    
+    query = db.collection("connections").where(
+        "requesterUid", "==", request.user["uid"]
+    ).where("status", "==", "PENDING").order_by("createdAt", direction=firestore.Query.DESCENDING)
+    
+    for doc in query.stream():
+        data = doc.to_dict()
+        recipient_profile = get_user_profile(data.get("recipientUid"))
+        sent.append({
+            "connectionId": doc.id,
+            "recipientUid": data.get("recipientUid"),
+            "recipientUsername": recipient_profile.get("username") if recipient_profile else "Unknown",
+            "inviteMessage": data.get("inviteMessage"),
+            "createdAt": serialize_datetime(data.get("createdAt")),
+        })
+    
+    return jsonify({"sent": sent})
+
+
+@app.route("/api/connections/<connection_id>/accept", methods=["POST"])
+@require_auth
+def accept_connection(connection_id):
+    """Accept a pending connection request.
+    
+    Requires the authenticated user to be the recipient.
+    Updates status to ACCEPTED.
+    """
+    ensure_user_profile(request.user["uid"])
+    
+    connection_snap = get_connection_doc(connection_id).get()
+    if not connection_snap.exists:
+        abort(404, description="Connection not found")
+    
+    connection = connection_snap.to_dict()
+    if connection.get("recipientUid") != request.user["uid"]:
+        abort(403, description="Only the recipient can accept this connection")
+    
+    if connection.get("status") != "PENDING":
+        abort(400, description="Connection is not pending")
+    
+    get_connection_doc(connection_id).update({
+        "status": "ACCEPTED",
+        "updatedAt": now_utc(),
+    })
+    
+    return jsonify({"status": "accepted"})
+
+
+@app.route("/api/connections/<connection_id>/decline", methods=["POST"])
+@require_auth
+def decline_connection(connection_id):
+    """Decline/ignore a pending connection request.
+    
+    Requires the authenticated user to be the recipient.
+    Updates status to DECLINED (requester is not notified).
+    """
+    ensure_user_profile(request.user["uid"])
+    
+    connection_snap = get_connection_doc(connection_id).get()
+    if not connection_snap.exists:
+        abort(404, description="Connection not found")
+    
+    connection = connection_snap.to_dict()
+    if connection.get("recipientUid") != request.user["uid"]:
+        abort(403, description="Only the recipient can decline this connection")
+    
+    if connection.get("status") != "PENDING":
+        abort(400, description="Connection is not pending")
+    
+    get_connection_doc(connection_id).update({
+        "status": "DECLINED",
+        "updatedAt": now_utc(),
+    })
+    
+    return jsonify({"status": "declined"})
+
+
+@app.route("/api/connections/<connection_id>/block", methods=["POST"])
+@require_auth
+def block_connection(connection_id):
+    """Block a user and report them.
+    
+    Requires the authenticated user to be the recipient.
+    Updates status to BLOCKED and creates a report.
+    Note: Unlike accept/decline, this can be called on connections in any status,
+    not just PENDING. This allows blocking users even after accepting a connection.
+    """
+    ensure_user_profile(request.user["uid"])
+    
+    connection_snap = get_connection_doc(connection_id).get()
+    if not connection_snap.exists:
+        abort(404, description="Connection not found")
+    
+    connection = connection_snap.to_dict()
+    if connection.get("recipientUid") != request.user["uid"]:
+        abort(403, description="Only the recipient can block this connection")
+    
+    requester_uid = connection.get("requesterUid")
+    
+    # Update connection status (works for any current status)
+    get_connection_doc(connection_id).update({
+        "status": "BLOCKED",
+        "updatedAt": now_utc(),
+    })
+    
+    # Create a report
+    report_id = str(uuid.uuid4())
+    db.collection("reports").document(report_id).set({
+        "targetType": "user",
+        "targetId": requester_uid,
+        "reason": "Blocked from connection request",
+        "reporterUid": request.user["uid"],
+        "createdAt": now_utc(),
+    })
+    
+    return jsonify({"status": "blocked", "reportId": report_id})
+
+
+@app.route("/api/connections/status/<user_id>", methods=["GET"])
+@require_auth
+def get_connection_status_with_user(user_id):
+    """Get connection status with a specific user.
+    
+    Returns connection status: 'accepted', 'pending_sent', 'pending_received', 'none', 'blocked'.
+    """
+    ensure_user_profile(request.user["uid"])
+    
+    if user_id == request.user["uid"]:
+        return jsonify({"status": "self"})
+    
+    # Check for accepted connection
+    if check_connection_status(request.user["uid"], user_id):
+        return jsonify({"status": "accepted"})
+    
+    # Check for pending connection
+    connection_id, connection, direction = get_pending_connection(request.user["uid"], user_id)
+    if connection:
+        return jsonify({
+            "status": f"pending_{direction}",
+            "connectionId": connection_id,
+            "inviteMessage": connection.get("inviteMessage") if direction == "received" else None,
+            "requesterUsername": None,  # Will be filled by frontend
+        })
+    
+    # Check if blocked
+    blocked_query = db.collection("connections").where(
+        "requesterUid", "==", request.user["uid"]
+    ).where("recipientUid", "==", user_id).where("status", "==", "BLOCKED").limit(1).stream()
+    
+    if any(blocked_query):
+        return jsonify({"status": "blocked"})
+    
+    # Check reverse block
+    reverse_blocked = db.collection("connections").where(
+        "requesterUid", "==", user_id
+    ).where("recipientUid", "==", request.user["uid"]).where("status", "==", "BLOCKED").limit(1).stream()
+    
+    if any(reverse_blocked):
+        return jsonify({"status": "blocked"})
+    
+    return jsonify({"status": "none"})
 
 
 @app.route("/api/reports", methods=["POST"])
