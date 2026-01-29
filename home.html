@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SchoolSnapchat · Home</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body data-page="home">
+    <div class="app-shell">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">chatapotomus</p>
+          <h1>Stories from your circle.</h1>
+        </div>
+        <div class="auth-actions">
+          <a class="btn ghost" href="/messages">Messages</a>
+          <a class="btn" href="/addstory" id="addStoryLink">Add Story</a>
+          <button id="signOutBtn" class="btn ghost">Sign out</button>
+        </div>
+      </header>
+
+      <section class="card story-row">
+        <div class="story-row-header">
+          <h2>Stories</h2>
+          <span class="muted" id="storyRowStatus"></span>
+        </div>
+        <div class="story-row-scroll" id="storyRow"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Friends</h2>
+          <span class="muted" id="friendsStatus"></span>
+        </div>
+        <div class="friend-list" id="friendList"></div>
+      </section>
+    </div>
+
+    <dialog id="storyViewer" class="story-viewer">
+      <div class="story-content">
+        <div class="story-header" id="storyHeader"></div>
+        <img id="storyImage" alt="Story" />
+        <button id="closeStoryBtn" class="btn ghost">Close</button>
+      </div>
+    </dialog>
+
+    <script id="firebase-config" type="application/json">
+      {{ firebase_config | tojson | safe }}
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

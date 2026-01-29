@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>chatapotomus</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">chatapotomus</p>
+          <h1>Stories first, private by default.</h1>
+        </div>
+        <div class="auth-actions">
+          <button id="signOutBtn" class="btn ghost" disabled>Sign out</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card" id="profileCard">
+          <h2>Profile</h2>
+          <p class="muted">Verify email to unlock stories and chat.</p>
+          <div class="stack">
+            <label class="input-label" for="email">Email</label>
+            <input id="email" type="email" placeholder="you@school.edu" />
+            <label class="input-label" for="password">Password</label>
+            <input id="password" type="password" placeholder="Minimum 6 characters" />
+            <div class="inline-actions">
+              <button id="createAccountBtn" class="btn primary">Create account</button>
+              <button id="signInBtn" class="btn">Sign in</button>
+            </div>
+            <div class="inline-actions">
+              <button id="verifyEmailBtn" class="btn ghost" disabled>Send verification</button>
+              <button id="refreshAuthBtn" class="btn ghost" disabled>Refresh status</button>
+            </div>
+          </div>
+          <div class="status" id="authStatus"></div>
+          <div class="stack">
+            <label class="input-label" for="username">Username</label>
+            <input id="username" type="text" placeholder="Create a username" />
+            <button id="createProfileBtn" class="btn" disabled>Create profile</button>
+          </div>
+          <div class="status" id="uidStatus"></div>
+          <div class="status" id="profileStatus"></div>
+        </section>
+
+        <section class="card" id="storiesCard">
+          <div class="card-header">
+            <h2>Stories</h2>
+            <button id="refreshStoriesBtn" class="btn subtle" disabled>Refresh</button>
+          </div>
+          <ul class="story-list" id="storyList"></ul>
+          <div class="status" id="storyStatus"></div>
+        </section>
+
+        <section class="card" id="uploadCard">
+          <h2>Upload Story</h2>
+          <p class="muted">Images only · 300 KB cap · 24h expiry</p>
+          <input id="storyFile" type="file" accept="image/*" />
+          <button id="uploadStoryBtn" class="btn" disabled>Upload story</button>
+          <div class="status" id="uploadStatus"></div>
+        </section>
+
+        <section class="card" id="chatCard">
+          <h2>Direct Messages</h2>
+          <div class="stack">
+            <label class="input-label" for="chatPartner">Chat partner UID</label>
+            <input id="chatPartner" type="text" placeholder="Paste Firebase UID" />
+            <button id="createChatBtn" class="btn" disabled>Create / Open chat</button>
+          </div>
+          <div class="chat-window" id="chatWindow"></div>
+          <div class="chat-actions">
+            <input id="chatMessage" type="text" placeholder="Type a message" />
+            <button id="sendMessageBtn" class="btn" disabled>Send</button>
+          </div>
+          <div class="chat-actions">
+            <input id="chatImage" type="file" accept="image/*" />
+            <button id="sendImageBtn" class="btn" disabled>Send image</button>
+          </div>
+          <div class="status" id="chatStatus"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="storyViewer" class="story-viewer">
+      <div class="story-content">
+        <img id="storyImage" alt="Story" />
+        <button id="closeStoryBtn" class="btn ghost">Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="imageViewer" class="story-viewer">
+      <div class="story-content">
+        <img id="messageImage" alt="Message" />
+        <button id="closeImageBtn" class="btn ghost">Close</button>
+      </div>
+    </dialog>
+
+    <script id="firebase-config" type="application/json">
+      {{ firebase_config | tojson | safe }}
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

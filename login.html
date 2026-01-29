@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SchoolSnapchat · Login</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body data-page="login">
+    <div class="app-shell narrow">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">chatapotomus</p>
+          <h1>Log in to continue.</h1>
+        </div>
+      </header>
+
+      <main class="card stack">
+        <div class="stack">
+          <label class="input-label" for="email">Email</label>
+          <input id="email" type="email" placeholder="you@school.edu" />
+        </div>
+        <div class="stack">
+          <label class="input-label" for="password">Password</label>
+          <input id="password" type="password" placeholder="Minimum 6 characters" />
+        </div>
+        <div class="inline-actions">
+          <button id="loginBtn" class="btn primary">Log in</button>
+          <button id="toggleCreateBtn" class="btn">Create account</button>
+        </div>
+        <div class="notice" id="verifyNotice" data-visible="{{ 'true' if verify else 'false' }}">
+          <strong>Verify your email.</strong>
+          <p class="muted">Check your inbox, then refresh status.</p>
+          <div class="inline-actions">
+            <button id="sendVerifyBtn" class="btn ghost" disabled>Send verification</button>
+            <button id="refreshVerifyBtn" class="btn ghost" disabled>Refresh status</button>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div id="usernameBlock" data-hidden="true">
+          <div class="stack">
+            <label class="input-label" for="username">Pick a username</label>
+            <input id="username" type="text" placeholder="Your handle" />
+            <button id="saveUsernameBtn" class="btn" disabled>Save username</button>
+          </div>
+        </div>
+        <div class="status" id="authStatus"></div>
+      </main>
+    </div>
+
+    <script id="firebase-config" type="application/json">
+      {{ firebase_config | tojson | safe }}
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

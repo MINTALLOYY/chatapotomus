@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+
+# Firebase
+firebase-creds.json
+firebase-sa-creds.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment Variables
+# .env

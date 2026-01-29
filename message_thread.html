@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SchoolSnapchat · Chat</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body data-page="message-thread" data-partner-uid="{{ partner_uid }}">
+    <div class="app-shell">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">chatapotomus</p>
+          <h1>Conversation</h1>
+        </div>
+        <div class="auth-actions">
+          <a class="btn ghost" href="/messages">Back to messages</a>
+          <button id="signOutBtn" class="btn ghost">Sign out</button>
+        </div>
+      </header>
+
+      <section class="card split-layout">
+        <aside class="split-sidebar">
+          <h3 class="section-title">Conversations</h3>
+          <div id="conversationList" class="list-block"></div>
+        </aside>
+        <div class="split-content">
+          <div class="chat-window" id="chatWindow"></div>
+          <div class="chat-input">
+            <button class="btn ghost" id="attachBtn" disabled>+</button>
+            <input id="chatMessage" type="text" placeholder="Type a message" />
+            <button id="sendMessageBtn" class="btn" disabled>Send</button>
+          </div>
+          <div class="status" id="chatStatus"></div>
+        </div>
+      </section>
+    </div>
+
+    <script id="firebase-config" type="application/json">
+      {{ firebase_config | tojson | safe }}
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

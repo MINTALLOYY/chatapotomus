@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SchoolSnapchat · Add Story</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body data-page="add-story">
+    <div class="app-shell">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">chatapotomus</p>
+          <h1>Add your story.</h1>
+        </div>
+        <div class="auth-actions">
+          <a class="btn ghost" href="/home">Home</a>
+          <button id="signOutBtn" class="btn ghost">Sign out</button>
+        </div>
+      </header>
+
+      <section class="card stack">
+        <div class="stack">
+          <label class="input-label" for="storyFile">Select image</label>
+          <input id="storyFile" type="file" accept="image/*" />
+        </div>
+        <div class="preview" id="storyPreview">
+          <span class="muted">Preview will appear here.</span>
+        </div>
+        <div class="inline-actions">
+          <button id="uploadStoryBtn" class="btn" disabled>Post story</button>
+          <span class="muted" id="storyStatus"></span>
+        </div>
+      </section>
+    </div>
+
+    <script id="firebase-config" type="application/json">
+      {{ firebase_config | tojson | safe }}
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-storage-compat.js"></script>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>
