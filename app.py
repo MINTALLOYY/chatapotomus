@@ -327,16 +327,26 @@ def check_connection_status(uid1, uid2):
     Returns connection dict if accepted, None otherwise.
     """
     # Check in both directions
-    query1 = db.collection("connections").where(
-        "requesterUid", "==", uid1
-    ).where("recipientUid", "==", uid2).where("status", "==", "ACCEPTED").limit(1).stream()
+    query1 = (
+        db.collection("connections")
+        .where(filter=firestore.FieldFilter("requesterUid", "==", uid1))
+        .where(filter=firestore.FieldFilter("recipientUid", "==", uid2))
+        .where(filter=firestore.FieldFilter("status", "==", "ACCEPTED"))
+        .limit(1)
+        .stream()
+    )
     
     for doc in query1:
         return doc.to_dict()
     
-    query2 = db.collection("connections").where(
-        "requesterUid", "==", uid2
-    ).where("recipientUid", "==", uid1).where("status", "==", "ACCEPTED").limit(1).stream()
+    query2 = (
+        db.collection("connections")
+        .where(filter=firestore.FieldFilter("requesterUid", "==", uid2))
+        .where(filter=firestore.FieldFilter("recipientUid", "==", uid1))
+        .where(filter=firestore.FieldFilter("status", "==", "ACCEPTED"))
+        .limit(1)
+        .stream()
+    )
     
     for doc in query2:
         return doc.to_dict()
@@ -351,17 +361,27 @@ def get_pending_connection(uid1, uid2):
     'sent' if uid1 is requester, 'received' if uid1 is recipient, None if no pending connection.
     """
     # Check if uid1 sent to uid2
-    query1 = db.collection("connections").where(
-        "requesterUid", "==", uid1
-    ).where("recipientUid", "==", uid2).where("status", "==", "PENDING").limit(1).stream()
+    query1 = (
+        db.collection("connections")
+        .where(filter=firestore.FieldFilter("requesterUid", "==", uid1))
+        .where(filter=firestore.FieldFilter("recipientUid", "==", uid2))
+        .where(filter=firestore.FieldFilter("status", "==", "PENDING"))
+        .limit(1)
+        .stream()
+    )
     
     for doc in query1:
         return doc.id, doc.to_dict(), "sent"
     
     # Check if uid2 sent to uid1
-    query2 = db.collection("connections").where(
-        "requesterUid", "==", uid2
-    ).where("recipientUid", "==", uid1).where("status", "==", "PENDING").limit(1).stream()
+    query2 = (
+        db.collection("connections")
+        .where(filter=firestore.FieldFilter("requesterUid", "==", uid2))
+        .where(filter=firestore.FieldFilter("recipientUid", "==", uid1))
+        .where(filter=firestore.FieldFilter("status", "==", "PENDING"))
+        .limit(1)
+        .stream()
+    )
     
     for doc in query2:
         return doc.id, doc.to_dict(), "received"
@@ -536,8 +556,22 @@ def get_me():
     """Return the authenticated user's profile summary.
 
     Requires `require_auth`. Returns `uid`, `username`, and story metadata.
+    Automatically resets `storyPosted` flag if 24+ hours have passed since last post.
     """
     profile = ensure_user_profile(request.user["uid"])
+    
+    # Check if storyPosted flag should be reset
+    if profile.get("storyPosted"):
+        posted_at = profile.get("storyPostedAt")
+        if isinstance(posted_at, datetime) and now_utc() - posted_at >= timedelta(hours=STORY_TTL_HOURS):
+            # Reset the flag since 24 hours have passed
+            get_user_doc(request.user["uid"]).set({
+                "storyPosted": False,
+                "storyPostedAt": None,
+            }, merge=True)
+            profile["storyPosted"] = False
+            profile["storyPostedAt"] = None
+    
     return jsonify({
         "uid": request.user["uid"],
         "username": profile.get("username"),
@@ -1032,6 +1066,78 @@ def list_sent_invites():
     return jsonify({"sent": sent})
 
 
+@app.route("/api/connections/contacts", methods=["GET"])
+@require_auth
+def list_contacts():
+    """List all users with their connection status relative to the requester.
+
+    Returns an array of users with `uid`, `username`, `status`, and
+    optional `connectionId`/`inviteMessage` for pending requests.
+    Status values: accepted, pending_sent, pending_received, blocked, none.
+    """
+    ensure_user_profile(request.user["uid"])
+
+    uid = request.user["uid"]
+
+    connections = {}
+    for doc in db.collection("connections").where("requesterUid", "==", uid).stream():
+        data = doc.to_dict()
+        other_uid = data.get("recipientUid")
+        if not other_uid:
+            continue
+        connections[other_uid] = {
+            "status": data.get("status"),
+            "direction": "sent",
+            "connectionId": doc.id,
+            "inviteMessage": data.get("inviteMessage"),
+        }
+
+    for doc in db.collection("connections").where("recipientUid", "==", uid).stream():
+        data = doc.to_dict()
+        other_uid = data.get("requesterUid")
+        if not other_uid:
+            continue
+        connections[other_uid] = {
+            "status": data.get("status"),
+            "direction": "received",
+            "connectionId": doc.id,
+            "inviteMessage": data.get("inviteMessage"),
+        }
+
+    users = []
+    for doc in db.collection("users").stream():
+        if doc.id == uid:
+            continue
+        profile = doc.to_dict() or {}
+        connection = connections.get(doc.id)
+        status = "none"
+        connection_id = None
+        invite_message = None
+
+        if connection:
+            raw_status = connection.get("status")
+            direction = connection.get("direction")
+            if raw_status == "BLOCKED":
+                status = "blocked"
+            elif raw_status == "ACCEPTED":
+                status = "accepted"
+            elif raw_status == "PENDING":
+                status = "pending_sent" if direction == "sent" else "pending_received"
+                connection_id = connection.get("connectionId")
+                if direction == "received":
+                    invite_message = connection.get("inviteMessage")
+
+        users.append({
+            "uid": doc.id,
+            "username": profile.get("username") or "Unknown",
+            "status": status,
+            "connectionId": connection_id,
+            "inviteMessage": invite_message,
+        })
+
+    return jsonify({"users": users})
+
+
 @app.route("/api/connections/<connection_id>/accept", methods=["POST"])
 @require_auth
 def accept_connection(connection_id):
@@ -1158,17 +1264,27 @@ def get_connection_status_with_user(user_id):
         })
     
     # Check if blocked
-    blocked_query = db.collection("connections").where(
-        "requesterUid", "==", request.user["uid"]
-    ).where("recipientUid", "==", user_id).where("status", "==", "BLOCKED").limit(1).stream()
+    blocked_query = (
+        db.collection("connections")
+        .where(filter=firestore.FieldFilter("requesterUid", "==", request.user["uid"]))
+        .where(filter=firestore.FieldFilter("recipientUid", "==", user_id))
+        .where(filter=firestore.FieldFilter("status", "==", "BLOCKED"))
+        .limit(1)
+        .stream()
+    )
     
     if any(blocked_query):
         return jsonify({"status": "blocked"})
     
     # Check reverse block
-    reverse_blocked = db.collection("connections").where(
-        "requesterUid", "==", user_id
-    ).where("recipientUid", "==", request.user["uid"]).where("status", "==", "BLOCKED").limit(1).stream()
+    reverse_blocked = (
+        db.collection("connections")
+        .where(filter=firestore.FieldFilter("requesterUid", "==", user_id))
+        .where(filter=firestore.FieldFilter("recipientUid", "==", request.user["uid"]))
+        .where(filter=firestore.FieldFilter("status", "==", "BLOCKED"))
+        .limit(1)
+        .stream()
+    )
     
     if any(reverse_blocked):
         return jsonify({"status": "blocked"})
@@ -1285,6 +1401,4 @@ def handle_error(error):
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    debug = os.getenv("FLASK_ENV") == "development"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(debug=True)

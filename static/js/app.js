@@ -392,14 +392,13 @@ const initMessagesHome = async () => {
     window.location.href = "/login";
   });
 
-  const [chats, friends, requests] = await Promise.all([
+  const [chats, contacts] = await Promise.all([
     apiRequest("/api/chats"),
-    apiRequest("/api/users/friends"),
-    apiRequest("/api/connections/requests"),
+    apiRequest("/api/connections/contacts"),
   ]);
 
   const friendMap = new Map(
-    friends.friends.map((friend) => [friend.uid, friend.username])
+    contacts.users.map((user) => [user.uid, user.username])
   );
 
   const messaged = new Set();
@@ -423,15 +422,18 @@ const initMessagesHome = async () => {
 
   // Display connection requests
   requestsList.innerHTML = "";
-  if (!requests.requests.length) {
+  const receivedRequests = contacts.users.filter(
+    (user) => user.status === "pending_received"
+  );
+  if (!receivedRequests.length) {
     requestsList.innerHTML = '<p class="muted" style="padding: 1rem;">No pending requests</p>';
   } else {
-    requests.requests.forEach((request) => {
+    receivedRequests.forEach((request) => {
       const item = document.createElement("a");
       item.className = "list-item";
-      item.href = `/messages/${request.requesterUid}`;
+      item.href = `/messages/${request.uid}`;
       item.innerHTML = `
-        <span>${escapeHtml(request.requesterUsername)}</span>
+        <span>${escapeHtml(request.username)}</span>
         <span class="muted">New request</span>
       `;
       requestsList.appendChild(item);
@@ -439,89 +441,100 @@ const initMessagesHome = async () => {
   }
 
   friendsList.innerHTML = "";
-  // For each friend, check connection status
-  // Note: This makes individual API calls per friend (N+1 query pattern).
-  // For production with many users, consider implementing a batch endpoint like
-  // POST /api/connections/status/batch with body: {"userIds": ["uid1", "uid2", ...]}
-  for (const friend of friends.friends) {
-    if (messaged.has(friend.uid)) continue;
-    
-    try {
-      const statusData = await apiRequest(`/api/connections/status/${friend.uid}`);
-      const item = document.createElement("div");
-      item.className = "list-item";
-      item.style.cursor = "default";
-      
-      if (statusData.status === "self") {
-        // Skip self - shouldn't message yourself
-        continue;
-      } else if (statusData.status === "accepted") {
-        // Can message - create link
-        const link = document.createElement("a");
-        link.href = `/messages/${friend.uid}`;
-        link.className = "list-item";
-        link.innerHTML = `
-          <span>${escapeHtml(friend.username)}</span>
-          <span class="muted">Message</span>
-        `;
-        friendsList.appendChild(link);
-      } else if (statusData.status === "pending_sent") {
-        // Already sent invite
-        item.innerHTML = `
-          <span>${escapeHtml(friend.username)}</span>
-          <span class="muted">Requested</span>
-        `;
-        friendsList.appendChild(item);
-      } else if (statusData.status === "pending_received") {
-        // They sent us an invite - show in requests instead
-        continue;
-      } else if (statusData.status === "blocked") {
-        // User is blocked - don't show them
-        continue;
-      } else if (statusData.status === "none") {
-        // Show invite button
-        item.innerHTML = `
-          <span>${escapeHtml(friend.username)}</span>
-          <button class="btn subtle" data-uid="${friend.uid}" data-username="${escapeHtml(friend.username)}">Invite</button>
-        `;
-        friendsList.appendChild(item);
-        
-        // Add click handler for invite button
-        const inviteBtn = item.querySelector("button");
-        inviteBtn.addEventListener("click", async (e) => {
-          e.preventDefault();
-          const uid = inviteBtn.dataset.uid;
-          const username = inviteBtn.dataset.username;
-          const message = prompt(`Send an invite to ${username}:\n\nOptional personal message:`);
-          if (message === null) return; // User cancelled
-          
-          try {
-            await apiRequest("/api/connections/invite", {
-              method: "POST",
-              body: JSON.stringify({
-                recipientUid: uid,
-                inviteMessage: message,
-              }),
-            });
-            inviteBtn.textContent = "Requested";
-            inviteBtn.disabled = true;
-            inviteBtn.className = "btn ghost";
-          } catch (error) {
-            alert("Failed to send invite: " + error.message);
-          }
-        });
-      }
-    } catch (error) {
-      console.error(`Failed to check status for ${friend.uid}:`, error);
-      // Default to showing invite button on error
-      const item = document.createElement("div");
-      item.className = "list-item";
+  for (const user of contacts.users) {
+    if (messaged.has(user.uid)) continue;
+    if (user.status === "blocked") continue;
+
+    if (user.status === "accepted") {
+      const link = document.createElement("a");
+      link.href = `/messages/${user.uid}`;
+      link.className = "list-item";
+      link.innerHTML = `
+        <span>${escapeHtml(user.username)}</span>
+        <span class="muted">Message</span>
+      `;
+      friendsList.appendChild(link);
+      continue;
+    }
+
+    if (user.status === "pending_received") {
+      continue;
+    }
+
+    const item = document.createElement("div");
+    item.className = "list-item";
+    item.style.cursor = "default";
+
+    if (user.status === "pending_sent") {
       item.innerHTML = `
-        <span>${escapeHtml(friend.username)}</span>
-        <span class="muted">Error</span>
+        <span>${escapeHtml(user.username)}</span>
+        <span class="muted">Requested</span>
       `;
       friendsList.appendChild(item);
+      continue;
     }
+
+    item.classList.add("is-stacked");
+    item.innerHTML = `
+      <div class="invite-row">
+        <span>${escapeHtml(user.username)}</span>
+        <button class="btn subtle" data-uid="${user.uid}" data-username="${escapeHtml(user.username)}">Invite</button>
+      </div>
+    `;
+    friendsList.appendChild(item);
+
+    const inviteBtn = item.querySelector("button");
+    inviteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (item.querySelector(".invite-inline")) return;
+
+      inviteBtn.disabled = true;
+      const form = document.createElement("div");
+      form.className = "invite-inline";
+      form.innerHTML = `
+        <textarea placeholder="Optional personal message..."></textarea>
+        <div class="inline-actions">
+          <button class="btn subtle" type="button">Send invite</button>
+          <button class="btn ghost" type="button">Cancel</button>
+        </div>
+        <p class="muted invite-status"></p>
+      `;
+      item.appendChild(form);
+
+      const messageInput = form.querySelector("textarea");
+      const sendBtn = form.querySelector(".btn.subtle");
+      const cancelBtn = form.querySelector(".btn.ghost");
+      const statusEl = form.querySelector(".invite-status");
+
+      cancelBtn.addEventListener("click", () => {
+        form.remove();
+        inviteBtn.disabled = false;
+      });
+
+      sendBtn.addEventListener("click", async () => {
+        const uid = inviteBtn.dataset.uid;
+        const message = messageInput.value.trim();
+        sendBtn.disabled = true;
+        statusEl.textContent = "Sending...";
+        try {
+          await apiRequest("/api/connections/invite", {
+            method: "POST",
+            body: JSON.stringify({
+              recipientUid: uid,
+              inviteMessage: message,
+            }),
+          });
+          item.innerHTML = `
+            <span>${escapeHtml(user.username)}</span>
+            <span class="muted">Requested</span>
+          `;
+          item.classList.remove("is-stacked");
+        } catch (error) {
+          statusEl.textContent = error.message || "Failed to send invite.";
+          sendBtn.disabled = false;
+        }
+      });
+    });
   }
 };
 

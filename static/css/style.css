@@ -468,6 +468,39 @@ input {
   text-decoration: none;
 }
 
+.list-item.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+
+.invite-inline {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.invite-inline textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-family: var(--font-body);
+  resize: vertical;
+}
+
+.invite-inline .invite-status {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
 .list-item.active {
   border-color: var(--accent);
   background: var(--accent-soft);
