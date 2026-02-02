@@ -163,7 +163,7 @@ const initLogin = () => {
     if (!auth.currentUser) return;
     try {
       await auth.currentUser.sendEmailVerification();
-      setStatus(authStatus, "Verification email sent.");
+      setStatus(authStatus, "Verification email sent. Do not refresh page. If using school account, email will take a minute to arrive. It still works even if it shows link is expired.");
     } catch (error) {
       setStatus(authStatus, error.message);
     }
@@ -859,3 +859,4 @@ auth.onAuthStateChanged(async (user) => {
 if (page === "login") {
   initLogin();
 }
+
