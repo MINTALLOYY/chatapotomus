@@ -335,7 +335,16 @@ const initHome = async () => {
   const storyImage = document.getElementById("storyImage");
   const storyHeader = document.getElementById("storyHeader");
   const closeStoryBtn = document.getElementById("closeStoryBtn");
-
+  
+  (async () => {
+    try {
+      await apiRequest("/api/maintenance/cleanup", { method: "POST" });
+      // Optional: console.log("Cleanup run on home load");
+    } catch (e) {
+      console.warn("Cleanup failed", e);
+    }
+  })();
+  
   signOutBtn.addEventListener("click", async () => {
     await auth.signOut();
     await syncSession(null);
@@ -1164,3 +1173,4 @@ auth.onAuthStateChanged(async (user) => {
 if (page === "login") {
   initLogin();
 }
+
