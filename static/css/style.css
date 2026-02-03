@@ -324,12 +324,31 @@ input {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: var(--space-2);
-  min-height: 160px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   display: grid;
   gap: var(--space-1);
+  justify-items: start;
+  align-content: start;
 }
 
+.reply-context,
+.chat-input,
+.status {
+  flex: 0 0 auto;
+}
+
+.chat-container {
+  height: 80dvh;
+  margin: 10dvh 0;
+  box-sizing: border-box;
+}
+
+/* Fallback for older browsers */
+@supports not (height: 1dvh) {
+  .chat-container { height: 80vh; margin: 10vh 0; }
+}
 .split-sidebar {
   width: 20%;
   min-width: 200px;
@@ -342,6 +361,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  min-height: 0;
 }
 
 .chat-message {
@@ -354,6 +374,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: auto;
 }
 
 .chat-message.jump-highlight {

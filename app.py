@@ -7,6 +7,7 @@ from functools import wraps
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 from firebase_admin import auth, credentials, firestore, initialize_app, storage
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 APP_TIMEZONE = timezone.utc
 STORY_TTL_HOURS = 24
@@ -526,8 +527,8 @@ def check_chat_has_unread(chat_id, uid, last_accessed):
     """
     query = (
         db.collection("messages")
-        .where("chatId", "==", chat_id)
-        .where("senderUid", "!=", uid)
+        .where(filter=FieldFilter("chatId", "==", chat_id))
+        .where(filter=FieldFilter("senderUid", "!=", uid))
     )
     
     # Add timestamp filter if chat was previously accessed
