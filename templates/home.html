@@ -14,7 +14,10 @@
           <h1>Stories from your circle.</h1>
         </div>
         <div class="auth-actions">
-          <a class="btn ghost" href="/messages">Messages</a>
+          <a class="btn ghost" href="/messages" id="messagesLink">
+            Messages
+            <span class="notification-badge" id="messagesBadge" style="display: none;"></span>
+          </a>
           <a class="btn" href="/addstory" id="addStoryLink">Add Story</a>
           <button id="signOutBtn" class="btn ghost">Sign out</button>
         </div>
@@ -34,6 +37,14 @@
           <span class="muted" id="friendsStatus"></span>
         </div>
         <div class="friend-list" id="friendList"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>People you can invite</h2>
+          <span class="muted" id="invitesStatus"></span>
+        </div>
+        <div class="list-block" id="inviteList"></div>
       </section>
     </div>
 

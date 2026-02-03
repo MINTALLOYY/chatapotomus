@@ -26,6 +26,13 @@
         </aside>
         <div class="split-content">
           <div class="chat-window" id="chatWindow"></div>
+          <div class="reply-context" id="replyContext" data-visible="false">
+            <div class="reply-meta">
+              <span class="reply-label">Replying to</span>
+              <span id="replyContextText" class="reply-text"></span>
+            </div>
+            <button id="clearReplyBtn" class="btn ghost" type="button">Clear</button>
+          </div>
           <div class="chat-input">
             <button class="btn ghost" id="attachBtn" disabled>+</button>
             <input id="chatMessage" type="text" placeholder="Type a message" />
@@ -35,6 +42,22 @@
         </div>
       </section>
     </div>
+
+    <div class="message-action-popup" id="messageActionPopup" style="display: none;">
+      <button class="btn" id="popupReplyBtn">Reply</button>
+      <button class="btn ghost" id="popupDeleteBtn">Delete</button>
+    </div>
+
+    <dialog id="deleteConfirmDialog" class="confirm-dialog">
+      <div class="confirm-content">
+        <h3>Delete Message</h3>
+        <p>Are you sure you want to delete this message?</p>
+        <div class="confirm-actions">
+          <button id="confirmNoBtn" class="btn">No</button>
+          <button id="confirmYesBtn" class="btn ghost">Yes, Delete</button>
+        </div>
+      </div>
+    </dialog>
 
     <script id="firebase-config" type="application/json">
       {{ firebase_config | tojson | safe }}

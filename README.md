@@ -4,18 +4,8 @@ Minimal Flask + Firebase MVP that supports:
 - Verified auth gate
 - Story metadata + view-once image access
 - Direct messages (text + image)
-- **Connection invites system** (message requests for spam prevention)
+- Connection invites system (message requests for spam prevention)
 - Report submission + cleanup endpoint
-
-## Features
-
-### Connection Invites (NEW)
-A security feature that prevents spam by requiring users to send and accept connection requests before messaging. See [INVITES_FEATURE.md](INVITES_FEATURE.md) for full documentation.
-
-- Send invites with optional personal messages
-- Accept, ignore, or block & report requests
-- Requests appear in message inbox, not a separate tab
-- Rate limiting and spam prevention
 
 ## 1) Setup
 

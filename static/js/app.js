@@ -27,6 +27,27 @@ const setStatus = (element, message) => {
   }
 };
 
+const formatTimestamp = (timestamp) => {
+  if (!timestamp) return "";
+  try {
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    if (isNaN(date.getTime())) return "";
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return isToday ? timeStr : `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${timeStr}`;
+  } catch (error) {
+    return "";
+  }
+};
+
+const getMessagePreview = (message) => {
+  if (!message) return "";
+  if (message.deleted) return "Message deleted";
+  if (message.type === "image") return "image";
+  return message.contentRef || "";
+};
+
 const apiRequest = async (path, options = {}) => {
   if (!currentUser) {
     throw new Error("Not signed in");
@@ -46,6 +67,52 @@ const apiRequest = async (path, options = {}) => {
     throw new Error(payload.error || "Request failed");
   }
   return response.json();
+};
+
+const renderNotifications = async (listElement, statusElement) => {
+  if (!listElement) return;
+  try {
+    const response = await apiRequest("/api/notifications?limit=10");
+    listElement.innerHTML = "";
+    if (!response.notifications.length) {
+      setStatus(statusElement, "No notifications yet.");
+      return;
+    }
+    response.notifications.forEach((notification) => {
+      const item = document.createElement("div");
+      item.className = "list-item is-stacked";
+      const timestamp = formatTimestamp(notification.createdAt);
+      item.innerHTML = `
+        <strong>${escapeHtml(notification.title || "Notification")}</strong>
+        <span>${escapeHtml(notification.body || "")}</span>
+        <span class="muted">${timestamp}</span>
+      `;
+      listElement.appendChild(item);
+    });
+  } catch (error) {
+    setStatus(statusElement, error.message || "Failed to load notifications.");
+  }
+};
+
+const checkForNotifications = async () => {
+  try {
+    const response = await apiRequest("/api/notifications?limit=1");
+    if (response.notifications && response.notifications.length > 0) {
+      const unreadCount = response.notifications.filter(n => !n.isRead).length;
+      return unreadCount > 0;
+    }
+  } catch (error) {
+    // Silently fail if notifications can't be checked
+  }
+  return false;
+};
+
+const updateNotificationBadges = async () => {
+  const hasNotifications = await checkForNotifications();
+  const badge = document.getElementById("messagesBadge");
+  if (badge) {
+    badge.style.display = hasNotifications ? "inline-block" : "none";
+  }
 };
 
 const syncSession = async (user) => {
@@ -124,6 +191,7 @@ const initLogin = () => {
   const saveUsernameBtn = document.getElementById("saveUsernameBtn");
   const usernameInput = document.getElementById("username");
   const authStatus = document.getElementById("authStatus");
+  const loginHelp = document.getElementById("loginHelp");
 
   let createMode = false;
 
@@ -131,6 +199,11 @@ const initLogin = () => {
     createMode = enabled;
     toggleCreateBtn.textContent = enabled ? "Log in instead" : "Create account";
     loginBtn.textContent = enabled ? "Create account" : "Log in";
+    if (loginHelp) {
+      loginHelp.textContent = enabled
+        ? "Create your account, then verify your email to continue."
+        : "Use your school email and password to sign in.";
+    }
   };
 
   toggleCreateBtn.addEventListener("click", () => {
@@ -158,6 +231,22 @@ const initLogin = () => {
       setStatus(authStatus, error.message);
     }
   });
+
+  const startVerifyCooldown = (seconds) => {
+    let remaining = seconds;
+    sendVerifyBtn.disabled = true;
+    sendVerifyBtn.textContent = `Sent (${remaining}s)`;
+    const timer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(timer);
+        sendVerifyBtn.textContent = "Send verification";
+        sendVerifyBtn.disabled = false;
+        return;
+      }
+      sendVerifyBtn.textContent = `Sent (${remaining}s)`;
+    }, 1000);
+  };
 
   sendVerifyBtn.addEventListener("click", async () => {
     if (!auth.currentUser) return;
@@ -240,6 +329,8 @@ const initHome = async () => {
   const storyRowStatus = document.getElementById("storyRowStatus");
   const friendList = document.getElementById("friendList");
   const friendsStatus = document.getElementById("friendsStatus");
+  const inviteList = document.getElementById("inviteList");
+  const invitesStatus = document.getElementById("invitesStatus");
   const storyViewer = document.getElementById("storyViewer");
   const storyImage = document.getElementById("storyImage");
   const storyHeader = document.getElementById("storyHeader");
@@ -250,6 +341,11 @@ const initHome = async () => {
     await syncSession(null);
     window.location.href = "/login";
   });
+
+  // Check and update notification badge
+  await updateNotificationBadges();
+  // Periodically check for new notifications
+  setInterval(updateNotificationBadges, 30000);
 
   const me = await apiRequest("/api/users/me");
   if (me.storyPosted) {
@@ -265,17 +361,25 @@ const initHome = async () => {
   storiesResponse.stories.forEach((story) => {
     const card = document.createElement("button");
     card.className = "story-tile";
+    if (story.viewedByMe) {
+      card.classList.add("viewed");
+    }
     card.innerHTML = `<span class="story-avatar"></span><span class="story-name">${story.ownerUsername}</span>`;
-    card.addEventListener("click", () => viewStory(story));
+    if (!story.viewedByMe) {
+      card.addEventListener("click", () => viewStory(story));
+    }
     storyRow.appendChild(card);
   });
 
-  const friendsResponse = await apiRequest("/api/users/friends");
+  const contactsResponse = await apiRequest("/api/connections/contacts");
+  const acceptedFriends = contactsResponse.users.filter((user) => user.status === "accepted");
+  const inviteCandidates = contactsResponse.users.filter((user) => user.status === "none");
+
   friendList.innerHTML = "";
-  if (!friendsResponse.friends.length) {
+  if (!acceptedFriends.length) {
     friendsStatus.textContent = "No friends yet.";
   }
-  friendsResponse.friends.forEach((friend) => {
+  acceptedFriends.forEach((friend) => {
     const item = document.createElement("div");
     item.className = "friend-card";
     item.innerHTML = `
@@ -288,6 +392,75 @@ const initHome = async () => {
       <a class="btn subtle" href="/messages/${friend.uid}">Message</a>
     `;
     friendList.appendChild(item);
+  });
+
+  inviteList.innerHTML = "";
+  if (!inviteCandidates.length) {
+    invitesStatus.textContent = "Everyone has been invited.";
+  }
+  inviteCandidates.forEach((user) => {
+    const item = document.createElement("div");
+    item.className = "list-item is-stacked";
+    item.innerHTML = `
+      <div class="invite-row">
+        <span>${escapeHtml(user.username)}</span>
+        <button class="btn subtle" data-uid="${user.uid}" data-username="${escapeHtml(user.username)}">Invite</button>
+      </div>
+    `;
+    inviteList.appendChild(item);
+
+    const inviteBtn = item.querySelector("button");
+    inviteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (item.querySelector(".invite-inline")) return;
+
+      inviteBtn.disabled = true;
+      const form = document.createElement("div");
+      form.className = "invite-inline";
+      form.innerHTML = `
+        <textarea placeholder="Optional personal message..."></textarea>
+        <div class="inline-actions">
+          <button class="btn subtle" type="button">Send invite</button>
+          <button class="btn ghost" type="button">Cancel</button>
+        </div>
+        <p class="muted invite-status"></p>
+      `;
+      item.appendChild(form);
+
+      const messageInput = form.querySelector("textarea");
+      const sendBtn = form.querySelector(".btn.subtle");
+      const cancelBtn = form.querySelector(".btn.ghost");
+      const statusEl = form.querySelector(".invite-status");
+
+      cancelBtn.addEventListener("click", () => {
+        form.remove();
+        inviteBtn.disabled = false;
+      });
+
+      sendBtn.addEventListener("click", async () => {
+        const uid = inviteBtn.dataset.uid;
+        const message = messageInput.value.trim();
+        sendBtn.disabled = true;
+        statusEl.textContent = "Sending...";
+        try {
+          await apiRequest("/api/connections/invite", {
+            method: "POST",
+            body: JSON.stringify({
+              recipientUid: uid,
+              inviteMessage: message,
+            }),
+          });
+          item.innerHTML = `
+            <span>${escapeHtml(user.username)}</span>
+            <span class="muted">Requested</span>
+          `;
+          item.classList.remove("is-stacked");
+        } catch (error) {
+          statusEl.textContent = error.message || "Failed to send invite.";
+          sendBtn.disabled = false;
+        }
+      });
+    });
   });
 
   const viewStory = async (story) => {
@@ -391,6 +564,11 @@ const initMessagesHome = async () => {
     await syncSession(null);
     window.location.href = "/login";
   });
+
+  // Check and update notification badge
+  await updateNotificationBadges();
+  // Periodically check for new notifications
+  setInterval(updateNotificationBadges, 30000);
 
   const [chats, contacts] = await Promise.all([
     apiRequest("/api/chats"),
@@ -545,6 +723,9 @@ const initMessageThread = async () => {
   const chatMessageInput = document.getElementById("chatMessage");
   const sendMessageBtn = document.getElementById("sendMessageBtn");
   const chatStatus = document.getElementById("chatStatus");
+  const replyContext = document.getElementById("replyContext");
+  const replyContextText = document.getElementById("replyContextText");
+  const clearReplyBtn = document.getElementById("clearReplyBtn");
   const partnerUid = document.body.dataset.partnerUid;
 
   signOutBtn.addEventListener("click", async () => {
@@ -744,20 +925,108 @@ const initMessageThread = async () => {
     // Continue with empty friendMap - messages will show "Unknown" as sender
   }
 
-  const formatTimestamp = (timestamp) => {
-    if (!timestamp) return "";
-    try {
-      // Handle Firestore Timestamp objects
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      if (isNaN(date.getTime())) return "";
-      const now = new Date();
-      const isToday = date.toDateString() === now.toDateString();
-      const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      return isToday ? timeStr : `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${timeStr}`;
-    } catch (error) {
-      return "";
-    }
+  let replyTarget = null;
+
+  const setReplyTarget = (message) => {
+    replyTarget = message;
+    replyContextText.textContent = getMessagePreview(message) || "Message";
+    replyContext.dataset.visible = "true";
   };
+
+  const clearReplyTarget = () => {
+    replyTarget = null;
+    replyContextText.textContent = "";
+    replyContext.dataset.visible = "false";
+  };
+
+  clearReplyBtn.addEventListener("click", clearReplyTarget);
+
+  const scrollToMessage = (messageId) => {
+    const target = chatWindow.querySelector(`[data-message-id="${messageId}"]`);
+    if (!target) {
+      setStatus(chatStatus, "Referenced message is not in view.");
+      return;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("jump-highlight");
+    setTimeout(() => target.classList.remove("jump-highlight"), 1200);
+  };
+
+  const messageActionPopup = document.getElementById("messageActionPopup");
+  const popupReplyBtn = document.getElementById("popupReplyBtn");
+  const popupDeleteBtn = document.getElementById("popupDeleteBtn");
+  let currentPopupMessage = null;
+
+  const showMessageActionPopup = (event, message, isMine) => {
+    event.stopPropagation();
+    currentPopupMessage = message;
+    
+    // Position popup near click
+    const x = event.clientX;
+    const y = event.clientY;
+    messageActionPopup.style.left = `${x}px`;
+    messageActionPopup.style.top = `${y}px`;
+    messageActionPopup.style.display = "flex";
+    
+    // Show/hide delete button based on ownership
+    popupDeleteBtn.style.display = isMine ? "block" : "none";
+  };
+
+  const hideMessageActionPopup = () => {
+    messageActionPopup.style.display = "none";
+    currentPopupMessage = null;
+  };
+
+  // Hide popup when clicking elsewhere
+  document.addEventListener("click", (e) => {
+    if (!messageActionPopup.contains(e.target)) {
+      hideMessageActionPopup();
+    }
+  });
+
+  popupReplyBtn.addEventListener("click", () => {
+    if (currentPopupMessage) {
+      setReplyTarget(currentPopupMessage);
+      hideMessageActionPopup();
+    }
+  });
+
+  const deleteConfirmDialog = document.getElementById("deleteConfirmDialog");
+  const confirmYesBtn = document.getElementById("confirmYesBtn");
+  const confirmNoBtn = document.getElementById("confirmNoBtn");
+  let messageToDelete = null;
+
+  popupDeleteBtn.addEventListener("click", () => {
+    if (!currentPopupMessage) return;
+    messageToDelete = currentPopupMessage;
+    hideMessageActionPopup();
+    deleteConfirmDialog.showModal();
+  });
+
+  confirmNoBtn.addEventListener("click", () => {
+    deleteConfirmDialog.close();
+    messageToDelete = null;
+  });
+
+  confirmYesBtn.addEventListener("click", async () => {
+    if (!messageToDelete) return;
+    try {
+      await apiRequest(`/api/messages/${messageToDelete.messageId}`, { method: "DELETE" });
+      deleteConfirmDialog.close();
+      messageToDelete = null;
+    } catch (error) {
+      setStatus(chatStatus, error.message || "Failed to delete message.");
+      deleteConfirmDialog.close();
+    }
+  });
+
+  // Close dialog on backdrop click
+  deleteConfirmDialog.addEventListener("click", (e) => {
+    if (e.target === deleteConfirmDialog) {
+      deleteConfirmDialog.close();
+      messageToDelete = null;
+    }
+  });
 
   const listenToChat = () => {
     if (chatUnsubscribe) chatUnsubscribe();
@@ -769,9 +1038,10 @@ const initMessageThread = async () => {
       .onSnapshot((snapshot) => {
         chatWindow.innerHTML = "";
         snapshot.docs.forEach((doc) => {
-          const message = doc.data();
+          const message = { ...doc.data(), messageId: doc.id };
           const bubble = document.createElement("div");
           bubble.className = "chat-message";
+          bubble.dataset.messageId = doc.id;
           const isMine = message.senderUid === currentUser.uid;
           if (isMine) {
             bubble.classList.add("mine");
@@ -779,15 +1049,45 @@ const initMessageThread = async () => {
           
           const senderName = friendMap.get(message.senderUid) || "Unknown";
           const timestamp = formatTimestamp(message.createdAt);
+
+          const replyPreview = message.replyTo
+            ? `
+              <button class="reply-preview" data-reply-id="${message.replyTo}" type="button">
+                <span class="reply-label">Replying to</span>
+                <span class="reply-text">${escapeHtml(message.replyType === "image" ? "image" : (message.replyPreview || "Message"))}</span>
+              </button>
+            `
+            : "";
+
+          let messageText = getMessagePreview(message);
+          if (message.type === "image" && !message.deleted) {
+            messageText = "Image message";
+          }
+          if (message.deleted) {
+            messageText = "Message deleted";
+          }
           
           bubble.innerHTML = `
             <div class="message-header">
               <span class="message-sender">${escapeHtml(senderName)}</span>
               <span class="message-time">${timestamp}</span>
             </div>
-            <div class="message-text">${escapeHtml(message.contentRef)}</div>
+            ${replyPreview}
+            <div class="message-text">${escapeHtml(messageText)}</div>
           `;
           chatWindow.appendChild(bubble);
+
+          // Add click handler to show action popup
+          if (!message.deleted) {
+            bubble.addEventListener("click", (e) => {
+              showMessageActionPopup(e, message, isMine);
+            });
+          }
+
+          const replyJump = bubble.querySelector(".reply-preview");
+          if (replyJump) {
+            replyJump.addEventListener("click", () => scrollToMessage(message.replyTo));
+          }
         });
         chatWindow.scrollTop = chatWindow.scrollHeight;
       });
@@ -799,11 +1099,16 @@ const initMessageThread = async () => {
     const text = chatMessageInput.value.trim();
     if (!text) return;
     try {
+      const payload = { type: "text", text };
+      if (replyTarget) {
+        payload.replyTo = replyTarget.messageId;
+      }
       await apiRequest(`/api/chats/${activeChatId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ type: "text", text }),
+        body: JSON.stringify(payload),
       });
       chatMessageInput.value = "";
+      clearReplyTarget();
     } catch (error) {
       setStatus(chatStatus, error.message);
     }
@@ -859,4 +1164,3 @@ auth.onAuthStateChanged(async (user) => {
 if (page === "login") {
   initLogin();
 }
-

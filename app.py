@@ -149,6 +149,99 @@ def get_connection_doc(connection_id):
     return db.collection("connections").document(connection_id)
 
 
+def log_action(action, actor_uid, message_id=None, chat_id=None, target_uid=None, connection_id=None, metadata=None):
+    """Logs an action performed by a user into the activity logs collection.
+    The log entry includes details such as the action performed, the user who 
+    performed it, and optional metadata.
+
+    Args:
+        action (str): The type of action performed 
+        actor_uid (str): Performing user id
+        message_id (str, optional): Message ID, if applicable
+        chat_id (str, optional): Chat ID, if applicable
+        target_uid (str, optional): Target User ID, if applicable
+        connection_id (str, optional): Connection ID, if applicable
+        metadata (dict, optional): Additional metadata or context for the action.
+    """
+
+    log_id = str(uuid.uuid4())
+    payload = {
+        "action": action,
+        "actorUid": actor_uid,
+        "createdAt": now_utc(),
+    }
+    if message_id:
+        payload["messageId"] = message_id
+    if chat_id:
+        payload["chatId"] = chat_id
+    if target_uid:
+        payload["targetUid"] = target_uid
+    if connection_id:
+        payload["connectionId"] = connection_id
+    if metadata:
+        payload["metadata"] = metadata
+    db.collection("activity_logs").document(log_id).set(payload)
+
+
+def create_notification(
+    recipient_uid,
+    notification_type,
+    title,
+    body,
+    actor_uid=None,
+    message_id=None,
+    chat_id=None,
+    connection_id=None,
+):
+    """Create a notification entry for a user.
+
+    Args:
+        recipient_uid (str): UID of the user receiving the notification.
+        notification_type (str): Type of notification (e.g., 'invite', 'message', 'reply').
+        title (str): Notification title.
+        body (str): Notification body/message.
+        actor_uid (str, optional): UID of the user who triggered the notification.
+        message_id (str, optional): Associated message ID.
+        chat_id (str, optional): Associated chat ID.
+        connection_id (str, optional): Associated connection ID.
+    """
+    notification_id = str(uuid.uuid4())
+    payload = {
+        "recipientUid": recipient_uid,
+        "type": notification_type,
+        "title": title,
+        "body": body,
+        "createdAt": now_utc(),
+        "isRead": False,
+    }
+    if actor_uid:
+        payload["actorUid"] = actor_uid
+    if message_id:
+        payload["messageId"] = message_id
+    if chat_id:
+        payload["chatId"] = chat_id
+    if connection_id:
+        payload["connectionId"] = connection_id
+    db.collection("notifications").document(notification_id).set(payload)
+
+
+def build_message_preview(message):
+    """Generate a preview string for a message.
+
+    Args:
+        message (dict): Message document data.
+
+    Returns:
+        str: 'Message deleted' if deleted, 'image' if image type, 
+        otherwise the message content (truncated).
+    """
+    if message.get("deleted"):
+        return "Message deleted"
+    if message.get("type") == "image":
+        return "image"
+    return (message.get("contentRef") or "").strip()
+
+
 def check_rate_limit(uid, action_key):
     """Simple in-memory rate limiter.
 
@@ -250,6 +343,13 @@ def render_page(template_name, **context):
 
 @app.before_request
 def enforce_page_auth():
+    """Enforce authentication for page routes.
+
+    Routes to /api, /static, /login, and /health are bypassed.
+    Authenticated & verified users are redirected to /home.
+    Unauthenticated users are redirected to /login.
+    Unverified users are redirected to /login with verify=true.
+    """
     if request.path.startswith("/api"):
         return None
     if request.path.startswith("/static"):
@@ -311,6 +411,19 @@ def generate_signed_url(path, method, content_type=None, minutes=SIGNED_URL_MINU
 
 
 def require_chat_member(chat_id, uid):
+    """Verify that the given user is a member of the specified chat.
+
+    Args:
+        chat_id (str): Chat identifier.
+        uid (str): User identifier to verify membership.
+
+    Returns:
+        dict: Chat document data if user is a member.
+
+    Raises:
+        404: Chat not found.
+        403: User is not authorized for this chat.
+    """
     chat_snap = get_chat_doc(chat_id).get()
     if not chat_snap.exists:
         abort(404, description="Chat not found")
@@ -323,8 +436,13 @@ def require_chat_member(chat_id, uid):
 
 def check_connection_status(uid1, uid2):
     """Check if two users have an accepted connection.
-    
-    Returns connection dict if accepted, None otherwise.
+
+    Args:
+        uid1 (str): First user identifier.
+        uid2 (str): Second user identifier.
+
+    Returns:
+        dict: Connection document if accepted, None otherwise.
     """
     # Check in both directions
     query1 = (
@@ -356,9 +474,15 @@ def check_connection_status(uid1, uid2):
 
 def get_pending_connection(uid1, uid2):
     """Get pending connection between two users if exists.
-    
-    Returns tuple (connection_id, connection_dict, direction) where direction is 
-    'sent' if uid1 is requester, 'received' if uid1 is recipient, None if no pending connection.
+
+    Args:
+        uid1 (str): First user identifier.
+        uid2 (str): Second user identifier.
+
+    Returns:
+        tuple: (connection_id, connection_dict, direction) where direction is 
+        'sent' if uid1 is requester, 'received' if uid1 is recipient, 
+        or (None, None, None) if no pending connection exists.
     """
     # Check if uid1 sent to uid2
     query1 = (
@@ -516,6 +640,7 @@ def bootstrap_user():
             "storyPosted": False,
             "storyPostedAt": None,
         })
+        log_action("created_profile", uid)
 
     return jsonify({"uid": uid})
 
@@ -546,6 +671,8 @@ def create_user():
         "storyPosted": False,
         "storyPostedAt": None,
     }, merge=True)
+
+    log_action("created_profile", request.user["uid"])
 
     return jsonify({"uid": request.user["uid"], "username": username})
 
@@ -599,31 +726,69 @@ def list_friends():
     return jsonify({"friends": friends})
 
 
+@app.route("/api/notifications", methods=["GET"])
+@require_auth
+def list_notifications():
+    """List recent notifications for the authenticated user.
+
+    Retrieves notifications in descending order by creation time.
+
+    Query Parameters:
+        limit (int, optional): Maximum notifications to retrieve. Defaults to 20.
+
+    Returns:
+        dict: JSON with 'notifications' array containing:
+            - notificationId (str): Notification identifier.
+            - type (str): Notification type (e.g., 'invite', 'message', 'reply').
+            - title (str): Notification title.
+            - body (str): Notification body.
+            - actorUid (str): User who triggered notification.
+            - messageId (str): Associated message ID if applicable.
+            - chatId (str): Associated chat ID if applicable.
+            - connectionId (str): Associated connection ID if applicable.
+            - createdAt (str): ISO 8601 timestamp.
+            - isRead (bool): Whether notification has been read.
+    """
+
+    ensure_user_profile(request.user["uid"])
+    limit = int(request.args.get("limit", 20))
+    notifications = []
+    query = (
+        db.collection("notifications")
+        .where("recipientUid", "==", request.user["uid"])
+        .order_by("createdAt", direction=firestore.Query.DESCENDING)
+        .limit(limit)
+    )
+    for doc in query.stream():
+        data = doc.to_dict()
+        notifications.append({
+            "notificationId": doc.id,
+            "type": data.get("type"),
+            "title": data.get("title"),
+            "body": data.get("body"),
+            "actorUid": data.get("actorUid"),
+            "messageId": data.get("messageId"),
+            "chatId": data.get("chatId"),
+            "connectionId": data.get("connectionId"),
+            "createdAt": serialize_datetime(data.get("createdAt")),
+            "isRead": data.get("isRead", False),
+        })
+    return jsonify({"notifications": notifications})
+
+
 @app.route("/api/stories", methods=["GET"])
 @require_auth
 def list_stories():
-    """List active stories visible to the user.
-
-    This function retrieves and returns a list of active stories that are visible to the authenticated user. 
-    A story is considered active if its `expiresAt` timestamp is in the future. Each story includes information 
-    about the story's owner, media, and timestamps.
+    """List active (non-expired) stories visible to the user.
 
     Returns:
-        flask.Response: A JSON response containing a list of active stories. Each story in the list includes:
-            - storyId (str): The unique identifier of the story.
-            - ownerUid (str): The unique identifier of the story's owner.
-            - ownerUsername (str): The username of the story's owner. Defaults to "Unknown" if the owner's profile is unavailable.
-            - mediaId (str): The unique identifier of the associated media.
-            - createdAt (str): The creation timestamp of the story, serialized as a string.
-            - expiresAt (str): The expiration timestamp of the story, serialized as a string.
-
-    Raises:
-        Exception: If the user's profile cannot be ensured or if there are issues retrieving data from the database.
-
-    Notes:
-        - This function requires the user to be authenticated.
-        - The `ensure_user_profile` function is called to verify the user's profile.
-        - The `serialize_datetime` function is used to convert datetime objects to strings.
+        dict: JSON with 'stories' array, each containing:
+            - storyId (str): Story identifier.
+            - ownerUid (str): Story owner's UID.
+            - ownerUsername (str): Story owner's username (or 'Unknown').
+            - mediaId (str): Associated media identifier.
+            - createdAt (str): ISO 8601 creation timestamp.
+            - expiresAt (str): ISO 8601 expiration timestamp.
     """
     ensure_user_profile(request.user["uid"])
     now = now_utc()
@@ -640,11 +805,14 @@ def list_stories():
         if not media_doc:
             continue
         owner_profile = get_user_profile(data.get("ownerUid"))
+        media_data = media_doc.to_dict()
+        viewed_by_me = request.user["uid"] in media_data.get("viewedBy", [])
         stories.append({
             "storyId": doc.id,
             "ownerUid": data.get("ownerUid"),
             "ownerUsername": owner_profile.get("username") if owner_profile else "Unknown",
             "mediaId": media_doc.id,
+            "viewedByMe": viewed_by_me,
             "createdAt": serialize_datetime(data.get("createdAt")),
             "expiresAt": serialize_datetime(data.get("expiresAt")),
         })
@@ -654,21 +822,26 @@ def list_stories():
 @app.route("/api/stories", methods=["POST"])
 @require_auth
 def create_story():
-    """
-    Endpoint to create a new story.
-    This endpoint allows an authenticated user to create a new story. It enforces rate limits
-    and ensures that users cannot post multiple stories within a specified time-to-live (TTL) period.
+    """Create a new story and return a storage path for client-side upload.
+
+    Enforces rate limits and ensures users can only post one story per 24 hours.
+
+    JSON body:
+        {
+            "contentType": "image/jpeg|image/png|image/webp"
+        }
+
     Returns:
-        JSON response containing:
-            - storyId (str): Unique identifier for the created story.
-            - mediaId (str): Unique identifier for the associated media.
-            - storagePath (str): Path for client-side Firebase Storage upload.
-            - expiresAt (str): ISO 8601 timestamp indicating when the story will expire.
+        dict: JSON with:
+            - storyId (str): Story identifier.
+            - mediaId (str): Associated media identifier.
+            - storagePath (str): Firebase Storage path for client upload.
+            - expiresAt (str): ISO 8601 expiration timestamp.
+
     Raises:
-        429 Too Many Requests: If the user has already posted a story within the TTL period.
-        400 Bad Request: If the required `contentType` field is missing in the request payload.
+        429: Story limit reached (already posted within 24 hours).
+        400: Missing or invalid contentType.
     """
-    """Create a new story and return a storage path for client-side upload."""
     profile = ensure_user_profile(request.user["uid"])
     check_rate_limit(request.user["uid"], "stories:create")
 
@@ -834,6 +1007,11 @@ def list_messages(chat_id):
             "senderUid": data.get("senderUid"),
             "type": data.get("type"),
             "contentRef": data.get("contentRef"),
+            "replyTo": data.get("replyTo"),
+            "replyPreview": data.get("replyPreview"),
+            "replyType": data.get("replyType"),
+            "deleted": data.get("deleted", False),
+            "deletedAt": serialize_datetime(data.get("deletedAt")),
             "viewedBy": data.get("viewedBy", []),
             "createdAt": serialize_datetime(data.get("createdAt")),
         })
@@ -869,12 +1047,40 @@ def create_message(chat_id):
         "viewedBy": [],
     }
 
+    reply_to = payload.get("replyTo")
+    is_reply = False
+    if reply_to:
+        reply_snap = get_message_doc(reply_to).get()
+        if not reply_snap.exists:
+            abort(404, description="Reply target not found")
+        reply_message = reply_snap.to_dict()
+        if reply_message.get("chatId") != chat_id:
+            abort(400, description="Reply target is not in this chat")
+        base_message["replyTo"] = reply_to
+        base_message["replyPreview"] = build_message_preview(reply_message)
+        base_message["replyType"] = reply_message.get("type")
+        is_reply = True
+
     if message_type == "text":
         content = payload.get("text", "").strip()
         if not content:
             abort(400, description="text is required")
         base_message["contentRef"] = content
         message_ref.set(base_message)
+        other_uid = next((uid for uid in chat.get("participants", []) if uid != request.user["uid"]), None)
+        action = "reply" if is_reply else "sent"
+        log_action(action, request.user["uid"], message_id=message_id, chat_id=chat_id, target_uid=other_uid)
+        if other_uid:
+            title = "New reply" if is_reply else "New message"
+            create_notification(
+                other_uid,
+                "reply" if is_reply else "message",
+                title,
+                content or "New message",
+                actor_uid=request.user["uid"],
+                message_id=message_id,
+                chat_id=chat_id,
+            )
         return jsonify({"messageId": message_id})
 
     content_type = payload.get("contentType")
@@ -889,6 +1095,21 @@ def create_message(chat_id):
     base_message["contentRef"] = storage_path
     base_message["viewed"] = False
     message_ref.set(base_message)
+
+    other_uid = next((uid for uid in chat.get("participants", []) if uid != request.user["uid"]), None)
+    action = "reply" if is_reply else "sent"
+    log_action(action, request.user["uid"], message_id=message_id, chat_id=chat_id, target_uid=other_uid)
+    if other_uid:
+        title = "New reply" if is_reply else "New message"
+        create_notification(
+            other_uid,
+            "reply" if is_reply else "message",
+            title,
+            "image",
+            actor_uid=request.user["uid"],
+            message_id=message_id,
+            chat_id=chat_id,
+        )
 
     upload_url = generate_signed_url(
         storage_path,
@@ -912,6 +1133,8 @@ def view_message(message_id):
         abort(404, description="Message not found")
 
     message = message_snap.to_dict()
+    if message.get("deleted"):
+        abort(410, description="Message deleted")
     if message.get("type") != "image":
         abort(400, description="Only image messages can be viewed once")
 
@@ -939,18 +1162,80 @@ def view_message(message_id):
     return jsonify({"viewUrl": signed_url})
 
 
+@app.route("/api/messages/<message_id>", methods=["DELETE"])
+@require_auth
+def delete_message(message_id):
+    """Delete a message created by the authenticated user.
+
+    Args:
+        message_id (str): Message identifier.
+
+    Returns:
+        dict: JSON with status 'deleted'.
+
+    Raises:
+        404: Message not found.
+        403: User is not the message sender (can only delete own messages).
+    """
+    ensure_user_profile(request.user["uid"])
+    message_snap = get_message_doc(message_id).get()
+    if not message_snap.exists:
+        abort(404, description="Message not found")
+
+    message = message_snap.to_dict()
+    if message.get("senderUid") != request.user["uid"]:
+        abort(403, description="You can only delete your own messages")
+
+    chat_id = message.get("chatId")
+    if chat_id:
+        require_chat_member(chat_id, request.user["uid"])
+
+    if message.get("deleted"):
+        return jsonify({"status": "deleted"})
+
+    if message.get("type") == "image":
+        storage_delete(message.get("contentRef"))
+
+    get_message_doc(message_id).update({
+        "deleted": True,
+        "deletedAt": now_utc(),
+        "deletedBy": request.user["uid"],
+        "originalType": message.get("type"),
+        "type": "deleted",
+        "contentRef": "",
+    })
+
+    other_uid = None
+    if chat_id:
+        chat_snap = get_chat_doc(chat_id).get()
+        if chat_snap.exists:
+            chat = chat_snap.to_dict()
+            other_uid = next((uid for uid in chat.get("participants", []) if uid != request.user["uid"]), None)
+
+    log_action("delete", request.user["uid"], message_id=message_id, chat_id=chat_id, target_uid=other_uid)
+    return jsonify({"status": "deleted"})
+
+
 @app.route("/api/connections/invite", methods=["POST"])
 @require_auth
 def send_invite():
     """Send a connection invitation to another user.
-    
-    JSON body: {
-        "recipientUid": "uid",
-        "inviteMessage": "optional message",
-        "contextType": "group|post|null",
-        "contextId": "optional id"
-    }
-    Requires auth. Returns the created connectionId.
+
+    JSON body:
+        {
+            "recipientUid": "target-user-uid",
+            "inviteMessage": "optional personal message",
+            "contextType": "optional context type",
+            "contextId": "optional context identifier"
+        }
+
+    Returns:
+        dict: JSON with 'connectionId' of the created invitation.
+
+    Raises:
+        400: Recipient UID missing, user is inviting themselves, or connection already exists.
+        404: Recipient user not found.
+        429: Rate limit exceeded.
     """
     ensure_user_profile(request.user["uid"])
     check_rate_limit(request.user["uid"], "connections:invite")
@@ -1004,6 +1289,16 @@ def send_invite():
         "createdAt": now_utc(),
         "updatedAt": now_utc(),
     })
+
+    log_action("sent_invite", request.user["uid"], connection_id=connection_id, target_uid=recipient_uid)
+    create_notification(
+        recipient_uid,
+        "invite",
+        "New invite",
+        invite_message or "You have a new connection invite.",
+        actor_uid=request.user["uid"],
+        connection_id=connection_id,
+    )
     
     return jsonify({"connectionId": connection_id})
 
@@ -1012,8 +1307,16 @@ def send_invite():
 @require_auth
 def list_connection_requests():
     """List pending connection requests received by the authenticated user.
-    
-    Returns a list of pending invitations with requester info.
+
+    Returns:
+        dict: JSON with 'requests' array, each containing:
+            - connectionId (str): Connection identifier.
+            - requesterUid (str): Sender's UID.
+            - requesterUsername (str): Sender's username.
+            - inviteMessage (str): Optional message from sender.
+            - contextType (str): Optional context type.
+            - contextId (str): Optional context identifier.
+            - createdAt (str): ISO 8601 timestamp.
     """
     ensure_user_profile(request.user["uid"])
     requests = []
@@ -1042,8 +1345,14 @@ def list_connection_requests():
 @require_auth
 def list_sent_invites():
     """List pending connection invites sent by the authenticated user.
-    
-    Returns a list of pending invitations sent to others.
+
+    Returns:
+        dict: JSON with 'sent' array, each containing:
+            - connectionId (str): Connection identifier.
+            - recipientUid (str): Recipient's UID.
+            - recipientUsername (str): Recipient's username.
+            - inviteMessage (str): Optional message sent.
+            - createdAt (str): ISO 8601 timestamp.
     """
     ensure_user_profile(request.user["uid"])
     sent = []
@@ -1142,9 +1451,19 @@ def list_contacts():
 @require_auth
 def accept_connection(connection_id):
     """Accept a pending connection request.
-    
-    Requires the authenticated user to be the recipient.
-    Updates status to ACCEPTED.
+
+    Requires the authenticated user to be the recipient of the invitation.
+
+    Args:
+        connection_id (str): Connection identifier.
+
+    Returns:
+        dict: JSON with status 'accepted'.
+
+    Raises:
+        404: Connection not found.
+        403: Authenticated user is not the recipient.
+        400: Connection is not pending.
     """
     ensure_user_profile(request.user["uid"])
     
@@ -1163,6 +1482,17 @@ def accept_connection(connection_id):
         "status": "ACCEPTED",
         "updatedAt": now_utc(),
     })
+
+    log_action("accept_invite", request.user["uid"], connection_id=connection_id, target_uid=connection.get("requesterUid"))
+    if connection.get("requesterUid"):
+        create_notification(
+            connection.get("requesterUid"),
+            "invite_accepted",
+            "Invite accepted",
+            "Your connection invite was accepted.",
+            actor_uid=request.user["uid"],
+            connection_id=connection_id,
+        )
     
     return jsonify({"status": "accepted"})
 
@@ -1171,9 +1501,20 @@ def accept_connection(connection_id):
 @require_auth
 def decline_connection(connection_id):
     """Decline/ignore a pending connection request.
-    
-    Requires the authenticated user to be the recipient.
-    Updates status to DECLINED (requester is not notified).
+
+    Requires the authenticated user to be the recipient of the invitation.
+    The requester is not notified of the decline.
+
+    Args:
+        connection_id (str): Connection identifier.
+
+    Returns:
+        dict: JSON with status 'declined'.
+
+    Raises:
+        404: Connection not found.
+        403: Authenticated user is not the recipient.
+        400: Connection is not pending.
     """
     ensure_user_profile(request.user["uid"])
     
@@ -1192,6 +1533,8 @@ def decline_connection(connection_id):
         "status": "DECLINED",
         "updatedAt": now_utc(),
     })
+
+    log_action("decline_invite", request.user["uid"], connection_id=connection_id, target_uid=connection.get("requesterUid"))
     
     return jsonify({"status": "declined"})
 
@@ -1200,11 +1543,20 @@ def decline_connection(connection_id):
 @require_auth
 def block_connection(connection_id):
     """Block a user and report them.
-    
-    Requires the authenticated user to be the recipient.
-    Updates status to BLOCKED and creates a report.
-    Note: Unlike accept/decline, this can be called on connections in any status,
-    not just PENDING. This allows blocking users even after accepting a connection.
+
+    Requires the authenticated user to be the recipient of the connection.
+    Unlike accept/decline, this can be called on connections in any status.
+    This allows blocking users even after accepting a connection.
+
+    Args:
+        connection_id (str): Connection identifier.
+
+    Returns:
+        dict: JSON with status 'blocked' and 'reportId'.
+
+    Raises:
+        404: Connection not found.
+        403: Authenticated user is not the recipient.
     """
     ensure_user_profile(request.user["uid"])
     
@@ -1233,6 +1585,8 @@ def block_connection(connection_id):
         "reporterUid": request.user["uid"],
         "createdAt": now_utc(),
     })
+
+    log_action("block_user", request.user["uid"], connection_id=connection_id, target_uid=requester_uid)
     
     return jsonify({"status": "blocked", "reportId": report_id})
 
@@ -1241,8 +1595,19 @@ def block_connection(connection_id):
 @require_auth
 def get_connection_status_with_user(user_id):
     """Get connection status with a specific user.
-    
-    Returns connection status: 'accepted', 'pending_sent', 'pending_received', 'none', 'blocked'.
+
+    Args:
+        user_id (str): Target user identifier.
+
+    Returns:
+        dict: JSON with 'status' field. Possible values:
+            - 'self': Same as authenticated user.
+            - 'accepted': Connected and accepted.
+            - 'pending_sent': Invitation sent by authenticated user (pending).
+            - 'pending_received': Invitation received by authenticated user (pending).
+            - 'blocked': Connection is blocked.
+            - 'none': No connection exists.
+            For pending_received, includes 'connectionId' and optional 'inviteMessage'.
     """
     ensure_user_profile(request.user["uid"])
     
@@ -1297,8 +1662,19 @@ def get_connection_status_with_user(user_id):
 def create_report():
     """Create a content/user report for moderation.
 
-    JSON body: {"targetType": "story|message|user", "targetId": "id", "reason": "..."}
-    Requires auth. Returns the created `reportId`.
+    JSON body:
+        {
+            "targetType": "story|message|user",
+            "targetId": "target-identifier",
+            "reason": "reason-for-report"
+        }
+
+    Returns:
+        dict: JSON with 'reportId' of the created report.
+
+    Raises:
+        400: Missing targetType, targetId, or reason.
+        429: Rate limit exceeded.
     """
     ensure_user_profile(request.user["uid"])
     check_rate_limit(request.user["uid"], "reports:create")
@@ -1328,9 +1704,15 @@ def create_report():
 def cleanup():
     """Run cleanup tasks for expired stories and old messages.
 
-    Protected endpoint intended for administrative/cron use. Removes expired
-    story media and messages (based on `expiresAt`, `deleteAfter`, and TTLs).
-    Returns a summary of removed items.
+    Protected endpoint intended for administrative or cron use.
+    Removes expired stories/media and TTL-expired messages.
+
+    Returns:
+        dict: JSON with 'removed' object containing counts:
+            - stories (int): Expired stories removed.
+            - storyMedia (int): Story media files removed.
+            - messages (int): Expired messages removed.
+            - messageMedia (int): Message media files removed.
     """
     ensure_user_profile(request.user["uid"])
     now = now_utc()
@@ -1380,6 +1762,13 @@ def cleanup():
 
 
 def storage_delete(path):
+    """Delete a file from Firebase Storage bucket.
+
+    Silently fails if path is empty or deletion raises an exception.
+
+    Args:
+        path (str): Storage object path within the bucket.
+    """
     if not path:
         return
     blob = bucket.blob(path)
