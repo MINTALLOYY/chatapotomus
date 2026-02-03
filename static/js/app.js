@@ -107,11 +107,48 @@ const checkForNotifications = async () => {
   return false;
 };
 
+const getUnreadCounts = async () => {
+  try {
+    const response = await apiRequest("/api/notifications/unread_counts");
+    return {
+      unreadMessageChats: response.unreadMessageChats || 0,
+      unreadStories: response.unreadStories || 0,
+      totalNotifications: response.totalNotifications || 0,
+    };
+  } catch (error) {
+    console.error("Failed to get unread counts:", error);
+    return {
+      unreadMessageChats: 0,
+      unreadStories: 0,
+      totalNotifications: 0,
+    };
+  }
+};
+
+const updatePageTitle = (count) => {
+  const baseTitle = document.title.split(" (")[0]; // Remove existing count
+  if (count > 0) {
+    document.title = `${baseTitle} (${count})`;
+  } else {
+    document.title = baseTitle;
+  }
+};
+
 const updateNotificationBadges = async () => {
   const hasNotifications = await checkForNotifications();
   const badge = document.getElementById("messagesBadge");
   if (badge) {
     badge.style.display = hasNotifications ? "inline-block" : "none";
+  }
+  
+  // Get unread counts for page title updates
+  const counts = await getUnreadCounts();
+  
+  // Update page title based on current page
+  if (page === "home") {
+    updatePageTitle(counts.totalNotifications);
+  } else if (page === "messages") {
+    updatePageTitle(counts.unreadMessageChats);
   }
 };
 
@@ -335,7 +372,7 @@ const initHome = async () => {
   const storyImage = document.getElementById("storyImage");
   const storyHeader = document.getElementById("storyHeader");
   const closeStoryBtn = document.getElementById("closeStoryBtn");
-  
+
   (async () => {
     try {
       await apiRequest("/api/maintenance/cleanup", { method: "POST" });
@@ -344,7 +381,7 @@ const initHome = async () => {
       console.warn("Cleanup failed", e);
     }
   })();
-  
+
   signOutBtn.addEventListener("click", async () => {
     await auth.signOut();
     await syncSession(null);
@@ -384,6 +421,16 @@ const initHome = async () => {
   const acceptedFriends = contactsResponse.users.filter((user) => user.status === "accepted");
   const inviteCandidates = contactsResponse.users.filter((user) => user.status === "none");
 
+  // Get chat list with unread counts to show notifications
+  const chatsResponse = await apiRequest("/api/chats");
+  const unreadByPartner = new Map();
+  chatsResponse.chats.forEach((chat) => {
+    const partner = chat.participants.find((uid) => uid !== currentUser.uid);
+    if (partner && chat.unreadCount > 0) {
+      unreadByPartner.set(partner, chat.unreadCount);
+    }
+  });
+
   friendList.innerHTML = "";
   if (!acceptedFriends.length) {
     friendsStatus.textContent = "No friends yet.";
@@ -391,9 +438,10 @@ const initHome = async () => {
   acceptedFriends.forEach((friend) => {
     const item = document.createElement("div");
     item.className = "friend-card";
+    const hasUnread = unreadByPartner.has(friend.uid);
     item.innerHTML = `
       <div class="friend-meta">
-        <div class="avatar"></div>
+        <div class="avatar ${hasUnread ? 'has-notification' : ''}"></div>
         <div>
           <p class="friend-name">${friend.username}</p>
         </div>
@@ -600,8 +648,12 @@ const initMessagesHome = async () => {
     const item = document.createElement("a");
     item.className = "list-item";
     item.href = `/messages/${partnerUid}`;
+    const hasUnread = chat.unreadCount > 0;
     item.innerHTML = `
-      <span>${friendMap.get(partnerUid) || "Unknown"}</span>
+      <div class="list-item-content">
+        ${hasUnread ? '<span class="notification-dot"></span>' : ''}
+        <span>${friendMap.get(partnerUid) || "Unknown"}</span>
+      </div>
       <span class="muted">Open</span>
     `;
     recentList.appendChild(item);
@@ -897,6 +949,15 @@ const initMessageThread = async () => {
     });
     activeChatId = chatData.chatId;
     sendMessageBtn.disabled = false;
+    
+    // Mark chat as accessed when user opens it
+    try {
+      await apiRequest(`/api/chats/${activeChatId}/mark_accessed`, {
+        method: "POST",
+      });
+    } catch (error) {
+      console.warn("Failed to mark chat as accessed:", error);
+    }
   } catch (error) {
     setStatus(chatStatus, "Failed to create chat: " + error.message);
     chatMessageInput.disabled = true;
@@ -1099,6 +1160,9 @@ const initMessageThread = async () => {
           }
         });
         chatWindow.scrollTop = chatWindow.scrollHeight;
+        
+        // Update page title with unread count (always 0 since user is viewing the chat)
+        updatePageTitle(0);
       });
   };
 
@@ -1173,4 +1237,3 @@ auth.onAuthStateChanged(async (user) => {
 if (page === "login") {
   initLogin();
 }
-

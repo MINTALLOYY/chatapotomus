@@ -513,6 +513,33 @@ def get_pending_connection(uid1, uid2):
     return None, None, None
 
 
+def check_chat_has_unread(chat_id, uid, last_accessed):
+    """Check if a chat has unread messages for a specific user.
+    
+    Args:
+        chat_id (str): Chat identifier.
+        uid (str): User identifier.
+        last_accessed (datetime): Last time user accessed the chat (None if never accessed).
+        
+    Returns:
+        bool: True if there are unread messages, False otherwise.
+    """
+    query = (
+        db.collection("messages")
+        .where("chatId", "==", chat_id)
+        .where("senderUid", "!=", uid)
+    )
+    
+    # Add timestamp filter if chat was previously accessed
+    if last_accessed:
+        query = query.where("createdAt", ">", last_accessed)
+    
+    query = query.limit(1)
+    
+    # Check if any document exists
+    return next(query.stream(), None) is not None
+
+
 @app.route("/")
 def index():
     """Root page redirect.
@@ -957,6 +984,7 @@ def create_chat():
         chat_ref.set({
             "participants": participants,
             "createdAt": firestore.SERVER_TIMESTAMP,
+            "lastAccessed": {},
         })
 
     return jsonify({"chatId": chat_id, "participants": participants})
@@ -967,16 +995,25 @@ def create_chat():
 def list_chats():
     """List chats that include the authenticated user.
 
-    Returns chat summaries including `chatId`, `participants`, and `createdAt`.
+    Returns chat summaries including `chatId`, `participants`, `createdAt`, and `unreadCount`.
     """
     ensure_user_profile(request.user["uid"])
     chats = []
-    for doc in db.collection("chats").where("participants", "array_contains", request.user["uid"]).stream():
+    uid = request.user["uid"]
+    
+    for doc in db.collection("chats").where("participants", "array_contains", uid).stream():
         data = doc.to_dict()
+        chat_id = doc.id
+        
+        # Check if chat has unread messages using helper function
+        last_accessed = data.get("lastAccessed", {}).get(uid)
+        has_unread = check_chat_has_unread(chat_id, uid, last_accessed)
+        
         chats.append({
-            "chatId": doc.id,
+            "chatId": chat_id,
             "participants": data.get("participants", []),
             "createdAt": serialize_datetime(data.get("createdAt")),
+            "unreadCount": 1 if has_unread else 0,
         })
     return jsonify({"chats": chats})
 
@@ -1214,6 +1251,91 @@ def delete_message(message_id):
 
     log_action("delete", request.user["uid"], message_id=message_id, chat_id=chat_id, target_uid=other_uid)
     return jsonify({"status": "deleted"})
+
+
+@app.route("/api/chats/<chat_id>/mark_accessed", methods=["POST"])
+@require_auth
+def mark_chat_accessed(chat_id):
+    """Mark a chat as accessed by the current user.
+    
+    Updates the lastAccessed timestamp for the current user in this chat.
+    This is used to track which messages are unread.
+    
+    Args:
+        chat_id (str): Chat identifier.
+        
+    Returns:
+        dict: JSON with status 'updated'.
+    """
+    ensure_user_profile(request.user["uid"])
+    require_chat_member(chat_id, request.user["uid"])
+    
+    chat_ref = get_chat_doc(chat_id)
+    uid = request.user["uid"]
+    
+    # Update the lastAccessed timestamp for this user
+    chat_ref.update({
+        f"lastAccessed.{uid}": now_utc()
+    })
+    
+    return jsonify({"status": "updated"})
+
+
+@app.route("/api/notifications/unread_counts", methods=["GET"])
+@require_auth
+def get_unread_counts():
+    """Get counts of unread messages and stories for the current user.
+    
+    Returns:
+        dict: JSON with:
+            - unreadMessageChats (int): Number of chats with unread messages.
+            - unreadStories (int): Number of unread stories.
+            - totalNotifications (int): Sum of unread chats and stories.
+    """
+    ensure_user_profile(request.user["uid"])
+    uid = request.user["uid"]
+    
+    # Count chats with unread messages using helper function
+    unread_message_chats = 0
+    for doc in db.collection("chats").where("participants", "array_contains", uid).stream():
+        data = doc.to_dict()
+        chat_id = doc.id
+        last_accessed = data.get("lastAccessed", {}).get(uid)
+        
+        if check_chat_has_unread(chat_id, uid, last_accessed):
+            unread_message_chats += 1
+    
+    # Count unread stories - fetch all story_media in one query for efficiency
+    unread_stories = 0
+    now = now_utc()
+    
+    # Get all active story IDs
+    story_ids = []
+    for doc in db.collection("stories").where("expiresAt", ">", now).stream():
+        story_ids.append(doc.id)
+    
+    # If there are stories, fetch their media in batches to check viewedBy
+    if story_ids:
+        # Firestore 'in' queries support up to 10 items, so batch if needed
+        for i in range(0, len(story_ids), 10):
+            batch_ids = story_ids[i:i+10]
+            media_query = (
+                db.collection("story_media")
+                .where("storyId", "in", batch_ids)
+            )
+            
+            for media_doc in media_query.stream():
+                media_data = media_doc.to_dict()
+                if uid not in media_data.get("viewedBy", []):
+                    unread_stories += 1
+    
+    total_notifications = unread_message_chats + unread_stories
+    
+    return jsonify({
+        "unreadMessageChats": unread_message_chats,
+        "unreadStories": unread_stories,
+        "totalNotifications": total_notifications,
+    })
 
 
 @app.route("/api/connections/invite", methods=["POST"])
