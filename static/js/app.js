@@ -1098,6 +1098,33 @@ const initMessageThread = async () => {
     }
   });
 
+  // Image viewing dialog
+  const imageViewDialog = document.getElementById("imageViewDialog");
+  const viewedImage = document.getElementById("viewedImage");
+  const imageCaption = document.getElementById("imageCaption");
+  const closeImageBtn = document.getElementById("closeImageBtn");
+
+  const showImageDialog = (imageUrl, caption) => {
+    viewedImage.src = imageUrl;
+    imageCaption.textContent = caption;
+    imageCaption.style.display = caption ? "block" : "none";
+    imageViewDialog.showModal();
+  };
+
+  closeImageBtn.addEventListener("click", () => {
+    imageViewDialog.close();
+    viewedImage.src = "";
+    imageCaption.textContent = "";
+  });
+
+  imageViewDialog.addEventListener("click", (e) => {
+    if (e.target === imageViewDialog) {
+      imageViewDialog.close();
+      viewedImage.src = "";
+      imageCaption.textContent = "";
+    }
+  });
+
   const listenToChat = () => {
     if (chatUnsubscribe) chatUnsubscribe();
     chatUnsubscribe = db
@@ -1129,12 +1156,17 @@ const initMessageThread = async () => {
             `
             : "";
 
-          let messageText = getMessagePreview(message);
-          if (message.type === "image" && !message.deleted) {
-            messageText = "Image message";
-          }
+          let messageContent = "";
           if (message.deleted) {
-            messageText = "Message deleted";
+            messageContent = `<div class="message-text">Message deleted</div>`;
+          } else if (message.type === "image") {
+            const caption = message.text ? `<div class="message-text">${escapeHtml(message.text)}</div>` : "";
+            messageContent = `
+              <div class="image-placeholder" data-message-id="${doc.id}">[📷 Image - Click to view]</div>
+              ${caption}
+            `;
+          } else {
+            messageContent = `<div class="message-text">${escapeHtml(getMessagePreview(message))}</div>`;
           }
           
           bubble.innerHTML = `
@@ -1143,9 +1175,47 @@ const initMessageThread = async () => {
               <span class="message-time">${timestamp}</span>
             </div>
             ${replyPreview}
-            <div class="message-text">${escapeHtml(messageText)}</div>
+            ${messageContent}
           `;
           chatWindow.appendChild(bubble);
+
+          // Handle image click
+          if (message.type === "image" && !message.deleted) {
+            const imagePlaceholder = bubble.querySelector(".image-placeholder");
+            if (imagePlaceholder) {
+              imagePlaceholder.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                const isMine = message.senderUid === currentUser.uid;
+                
+                // If it's the sender's image, just show it without marking as viewed
+                if (isMine) {
+                  // For sender, get the image URL directly
+                  try {
+                    const response = await apiRequest(`/api/messages/${doc.id}/url`, {
+                      method: "POST",
+                    });
+                    showImageDialog(response.viewUrl, message.text || "");
+                  } catch (error) {
+                    setStatus(chatStatus, "Failed to load image: " + error.message);
+                  }
+                } else {
+                  // For receiver, mark as viewed
+                  try {
+                    const response = await apiRequest(`/api/messages/${doc.id}/view`, {
+                      method: "POST",
+                    });
+                    showImageDialog(response.viewUrl, message.text || "");
+                  } catch (error) {
+                    if (error.message.includes("already viewed")) {
+                      setStatus(chatStatus, "This image has already been viewed and can only be seen once");
+                    } else {
+                      setStatus(chatStatus, "Failed to view image: " + error.message);
+                    }
+                  }
+                }
+              });
+            }
+          }
 
           // Add click handler to show action popup
           if (!message.deleted) {
@@ -1186,6 +1256,128 @@ const initMessageThread = async () => {
       setStatus(chatStatus, error.message);
     }
   };
+
+  const sendImageMessage = async (imageBlob, caption = "") => {
+    try {
+      const payload = { 
+        type: "image", 
+        contentType: "image/jpeg",
+        text: caption
+      };
+      if (replyTarget) {
+        payload.replyTo = replyTarget.messageId;
+      }
+      
+      const response = await apiRequest(`/api/chats/${activeChatId}/messages`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      // Upload the image using Firebase Storage SDK
+      const storage = firebase.storage();
+      const storageRef = storage.ref(response.storagePath);
+      await storageRef.put(imageBlob, { contentType: "image/jpeg" });
+
+      chatMessageInput.value = "";
+      clearReplyTarget();
+      setStatus(chatStatus, "Image sent");
+      setTimeout(() => setStatus(chatStatus, ""), 2000);
+    } catch (error) {
+      setStatus(chatStatus, error.message);
+    }
+  };
+
+  // Media picker functionality
+  const attachBtn = document.getElementById("attachBtn");
+  const mediaPickerPopup = document.getElementById("mediaPickerPopup");
+  const imagePickerBtn = document.getElementById("imagePickerBtn");
+  const emojiPickerBtn = document.getElementById("emojiPickerBtn");
+  const imageFileInput = document.getElementById("imageFileInput");
+  const emojiPickerContainer = document.getElementById("emojiPickerContainer");
+  
+  let emojiPicker = null;
+
+  // Toggle media picker popup
+  attachBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isVisible = mediaPickerPopup.style.display === "block";
+    
+    if (isVisible) {
+      mediaPickerPopup.style.display = "none";
+    } else {
+      // Position popup above the attach button
+      const rect = attachBtn.getBoundingClientRect();
+      mediaPickerPopup.style.left = `${rect.left}px`;
+      mediaPickerPopup.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+      // Side-by-side layout
+      mediaPickerPopup.style.display = "flex";
+      mediaPickerPopup.style.flexDirection = "row";
+      mediaPickerPopup.style.gap = "8px";
+      mediaPickerPopup.style.alignItems = "center";
+    }
+  });
+
+  // Image picker
+  imagePickerBtn.addEventListener("click", () => {
+    mediaPickerPopup.style.display = "none";
+    imageFileInput.click();
+  });
+
+  imageFileInput.addEventListener("change", async () => {
+    const file = imageFileInput.files[0];
+    if (!file) return;
+
+    try {
+      setStatus(chatStatus, "Compressing image...");
+      const compressedBlob = await compressImage(file);
+      
+      if (compressedBlob.size > MAX_IMAGE_BYTES) {
+        setStatus(chatStatus, "Image too large even after compression");
+        return;
+      }
+
+      const caption = chatMessageInput.value.trim();
+      await sendImageMessage(compressedBlob, caption);
+    } catch (error) {
+      setStatus(chatStatus, "Failed to send image: " + error.message);
+    }
+    
+    // Reset file input
+    imageFileInput.value = "";
+  });
+
+  // Emoji picker
+  emojiPickerBtn.addEventListener("click", async () => {
+    mediaPickerPopup.style.display = "none";
+    
+    // Create emoji picker if not exists
+    if (!emojiPicker) {
+      const module = await import('https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js');
+      emojiPicker = new module.Picker();
+      emojiPicker.addEventListener('emoji-click', (event) => {
+        chatMessageInput.value += event.detail.unicode;
+        chatMessageInput.focus();
+        emojiPickerContainer.style.display = "none";
+      });
+      emojiPickerContainer.appendChild(emojiPicker);
+    }
+    
+    // Position and show emoji picker
+    const rect = attachBtn.getBoundingClientRect();
+    emojiPickerContainer.style.left = `${rect.left}px`;
+    emojiPickerContainer.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+    emojiPickerContainer.style.display = "block";
+  });
+
+  // Close popups when clicking outside
+  document.addEventListener("click", (e) => {
+    if (!mediaPickerPopup.contains(e.target) && !attachBtn.contains(e.target)) {
+      mediaPickerPopup.style.display = "none";
+    }
+    if (!emojiPickerContainer.contains(e.target) && e.target !== emojiPickerBtn) {
+      emojiPickerContainer.style.display = "none";
+    }
+  });
 
   sendMessageBtn.addEventListener("click", sendMessage);
   chatMessageInput.addEventListener("keydown", (event) => {

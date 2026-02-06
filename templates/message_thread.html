@@ -34,7 +34,7 @@
             <button id="clearReplyBtn" class="btn ghost" type="button">Clear</button>
           </div>
           <div class="chat-input">
-            <button class="btn ghost" id="attachBtn" disabled>+</button>
+            <button class="btn ghost" id="attachBtn">+</button>
             <input id="chatMessage" type="text" placeholder="Type a message" />
             <button id="sendMessageBtn" class="btn" disabled>Send</button>
           </div>
@@ -48,6 +48,21 @@
       <button class="btn ghost" id="popupDeleteBtn">Delete</button>
     </div>
 
+    <div class="media-picker-popup" id="mediaPickerPopup" style="display: none;">
+      <button class="btn media-option" id="imagePickerBtn">
+        <span class="media-icon">🖼️</span>
+        <span>Image</span>
+      </button>
+      <button class="btn media-option" id="emojiPickerBtn">
+        <span class="media-icon">💀</span>
+        <span>Emoji</span>
+      </button>
+    </div>
+
+    <div class="emoji-picker-container" id="emojiPickerContainer" style="display: none;"></div>
+
+    <input type="file" id="imageFileInput" accept="image/*" style="display: none;" />
+
     <dialog id="deleteConfirmDialog" class="confirm-dialog">
       <div class="confirm-content">
         <h3>Delete Message</h3>
@@ -59,12 +74,21 @@
       </div>
     </dialog>
 
+    <dialog id="imageViewDialog" class="image-view-dialog">
+      <button id="closeImageBtn" class="btn ghost close-image-btn">✕</button>
+      <div class="image-view-content">
+        <img id="viewedImage" src="" alt="Message Image" />
+        <p id="imageCaption" class="image-caption"></p>
+      </div>
+    </dialog>
+
     <script id="firebase-config" type="application/json">
       {{ firebase_config | tojson | safe }}
     </script>
     <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-storage-compat.js"></script>
     <script src="/static/js/app.js"></script>
   </body>
 </html>

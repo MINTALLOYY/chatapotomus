@@ -533,7 +533,7 @@ def check_chat_has_unread(chat_id, uid, last_accessed):
     
     # Add timestamp filter if chat was previously accessed
     if last_accessed:
-        query = query.where("createdAt", ">", last_accessed)
+        query = query.where(filter=FieldFilter("createdAt", ">", last_accessed))
     
     query = query.limit(1)
     
@@ -1132,6 +1132,12 @@ def create_message(chat_id):
     )
     base_message["contentRef"] = storage_path
     base_message["viewed"] = False
+    
+    # Add optional text caption for image messages
+    caption = payload.get("text", "").strip()
+    if caption:
+        base_message["text"] = caption
+    
     message_ref.set(base_message)
 
     other_uid = next((uid for uid in chat.get("participants", []) if uid != request.user["uid"]), None)
@@ -1154,7 +1160,12 @@ def create_message(chat_id):
         method="PUT",
         content_type=content_type,
     )
-    return jsonify({"messageId": message_id, "uploadUrl": upload_url, "chat": chat})
+    return jsonify({
+        "messageId": message_id, 
+        "uploadUrl": upload_url, 
+        "storagePath": storage_path,
+        "chat": chat
+    })
 
 
 @app.route("/api/messages/<message_id>/view", methods=["POST"])
@@ -1192,6 +1203,36 @@ def view_message(message_id):
         "deleteAfter": now_utc() + timedelta(minutes=5),
     })
 
+    signed_url = generate_signed_url(
+        message["contentRef"],
+        method="GET",
+        minutes=STORY_VIEW_URL_MINUTES,
+    )
+    return jsonify({"viewUrl": signed_url})
+
+
+@app.route("/api/messages/<message_id>/url", methods=["POST"])
+@require_auth
+def get_message_url(message_id):
+    """Get a view URL for an image message.
+    
+    This allows the sender to view their own image or anyone in the chat
+    to get a URL for viewing. This doesn't mark it as viewed.
+    """
+    ensure_user_profile(request.user["uid"])
+    message_snap = get_message_doc(message_id).get()
+    if not message_snap.exists:
+        abort(404, description="Message not found")
+    
+    message = message_snap.to_dict()
+    if message.get("deleted"):
+        abort(410, description="Message deleted")
+    if message.get("type") != "image":
+        abort(400, description="Only image messages have URLs")
+    
+    chat_id = message.get("chatId")
+    require_chat_member(chat_id, request.user["uid"])
+    
     signed_url = generate_signed_url(
         message["contentRef"],
         method="GET",

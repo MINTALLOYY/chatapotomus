@@ -515,6 +515,59 @@ input {
   border-radius: var(--radius-sm);
 }
 
+.media-picker-popup {
+  position: fixed;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: var(--space-1);
+  z-index: 1000;
+  display: none;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.media-picker-popup .btn {
+  min-width: auto;
+}
+
+.media-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.media-icon {
+  font-size: 1.5rem;
+}
+
+.emoji-picker-container {
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: var(--space-1);
+}
+
+.emoji-picker-container emoji-picker {
+  --background: var(--panel);
+  --border-color: var(--border);
+  --button-active-background: var(--accent-soft);
+  --button-hover-background: var(--accent-soft);
+  --input-border-color: var(--border);
+  --input-font-color: var(--ink);
+  --outline-color: var(--accent);
+}
+
+
 .confirm-dialog {
   border: none;
   background: transparent;
@@ -556,6 +609,88 @@ input {
 .confirm-actions .btn {
   flex: 1;
 }
+
+.image-view-dialog {
+  border: none;
+  background: transparent;
+  padding: 0;
+  max-width: 90vw;
+  max-height: 90vh;
+  position: relative;
+}
+
+.image-view-dialog::backdrop {
+  background: rgba(17, 16, 14, 0.9);
+}
+
+.image-view-content {
+  background: var(--panel);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 600px;
+  max-height: 80vh;
+}
+
+.close-image-btn {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 8px 12px;
+  min-width: auto;
+  font-size: 1.2rem;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.close-image-btn:hover {
+  background: white;
+  transform: scale(1.1);
+}
+
+.image-view-content img {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+
+.image-caption {
+  margin: 0;
+  color: var(--ink);
+  text-align: center;
+  word-break: break-word;
+}
+
+.image-placeholder {
+  padding: var(--space-2);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  cursor: pointer;
+  text-align: center;
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.image-placeholder:hover {
+  background: var(--accent);
+  color: white;
+}
+
 
 .chat-actions {
   display: grid;
