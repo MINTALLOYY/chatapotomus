@@ -617,9 +617,6 @@ input {
   max-width: 90vw;
   max-height: 90vh;
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
 }
 
 .image-view-dialog::backdrop {
@@ -662,6 +659,7 @@ input {
 .close-image-btn:hover {
   background: white;
   transform: scale(1.1);
+  color: black;
 }
 
 .image-view-content img {
