@@ -616,7 +616,10 @@ input {
   padding: 0;
   max-width: 90vw;
   max-height: 90vh;
-  position: relative;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .image-view-dialog::backdrop {
