@@ -276,6 +276,11 @@ input {
   min-height: 20px;
   font-size: 0.85rem;
   color: var(--muted);
+  display: none;
+}
+
+.status:not(:empty) {
+  display: block;
 }
 
 .notice {
