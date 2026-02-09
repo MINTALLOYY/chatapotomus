@@ -345,14 +345,14 @@ input {
 }
 
 .chat-container {
-  height: 80dvh;
+  height: 70dvh;
   margin: 5dvh 0 0 0;
   box-sizing: border-box;
 }
 
 /* Fallback for older browsers */
 @supports not (height: 1dvh) {
-  .chat-container { height: 80vh; margin: 5vh 0 0 0; }
+  .chat-container { height: 70vh; margin: 5vh 0 0 0; }
 }
 .split-sidebar {
   width: 20%;
